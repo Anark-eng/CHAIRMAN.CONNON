@@ -1,0 +1,70 @@
+@import "tailwindcss";
+
+:root {
+  --background: #faf8f5;
+  --foreground: #201a14;
+  --surface: #ffffff;
+  --border: #e7e1d8;
+  --muted: #776f63;
+  --brand: #7a3b2e;
+  --brand-foreground: #fff7ef;
+  --accent: #b8823f;
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-surface: var(--surface);
+  --color-border: var(--border);
+  --color-muted: var(--muted);
+  --color-brand: var(--brand);
+  --color-brand-foreground: var(--brand-foreground);
+  --color-accent: var(--accent);
+  --font-sans: var(--font-body);
+  --font-serif: var(--font-reading-serif);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --background: #16130f;
+    --foreground: #f1ece2;
+    --surface: #221d17;
+    --border: #362f26;
+    --muted: #a99f8f;
+    --brand: #e2a487;
+    --brand-foreground: #2a1712;
+    --accent: #d9ab5f;
+  }
+}
+
+body {
+  background: var(--background);
+  color: var(--foreground);
+}
+
+a {
+  color: inherit;
+}
+
+/* Chapter reader themes: applied to the .reader wrapper element and
+   controlled independently of the site's light/dark mode, per the
+   reader's own saved preference. */
+.reader-light {
+  --reader-bg: #ffffff;
+  --reader-fg: #22201c;
+}
+
+.reader-dark {
+  --reader-bg: #15151a;
+  --reader-fg: #e7e6e1;
+}
+
+.reader-sepia {
+  --reader-bg: #f4ecd8;
+  --reader-fg: #3f3423;
+}
+
+.reader-surface {
+  background: var(--reader-bg);
+  color: var(--reader-fg);
+}
