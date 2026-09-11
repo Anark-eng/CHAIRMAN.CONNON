@@ -1,0 +1,44 @@
+import type { NovelStatus } from "@/lib/supabase/database.types";
+
+export type { NovelStatus };
+
+export interface GenreOption {
+  id: string;
+  name: string;
+  slug: string;
+}
+
+export interface TagOption {
+  id: string;
+  name: string;
+  slug: string;
+}
+
+export interface NovelCardData {
+  id: string;
+  title: string;
+  cover_url: string | null;
+  status: NovelStatus;
+  authorPenName: string | null;
+  genre: GenreOption | null;
+}
+
+export interface NovelDetailData extends NovelCardData {
+  synopsis: string;
+  author_id: string;
+  created_at: string;
+  tags: TagOption[];
+}
+
+export interface ChapterSummary {
+  id: string;
+  title: string;
+  order_number: number;
+  is_published: boolean;
+  published_at: string | null;
+}
+
+export interface ChapterDetail extends ChapterSummary {
+  novel_id: string;
+  body: string;
+}
