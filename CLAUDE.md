@@ -11,10 +11,15 @@ novels, read them, and keep them in a library.
   storage (the `covers` bucket). Accessed through `@supabase/ssr`.
 - Trending refresh runs inside the database itself via **pg_cron**, so no
   external scheduler is needed.
-- Env vars: `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY`,
-  and (optional) `NEXT_PUBLIC_SITE_URL` — see `.env.example`. The app
-  shows a plain setup message instead of crashing when the Supabase vars
-  are missing (`src/app/layout.tsx`).
+- Env vars:
+  - `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY` — Supabase.
+    The app shows a plain setup message instead of crashing when these
+    are missing (`src/app/layout.tsx`).
+  - `NEXT_PUBLIC_SITE_URL` (optional) — origin for auth-email links.
+  - `NOVELTREND_GUEST_SECRET` — server secret that HMAC-signs the
+    guest-reader cookie. Without it, guest reads aren't recorded at all
+    (better than recording a forgeable id). Never prefixed
+    `NEXT_PUBLIC_` — must stay server-side. See `.env.example`.
 
 ## Folder layout
 
@@ -73,6 +78,18 @@ supabase/
     0004_trending_and_blocks.sql     chapter_reads, blocked_tags, trending_scores,
                                      refresh_trending_scores(), pg_cron hourly job.
                                      Plain-English scoring rule at the top.
+    0005_anti_gaming.sql             Anti-gaming pass:
+                                     - record_chapter_read() SECURITY DEFINER
+                                       function; direct INSERT on chapter_reads
+                                       is revoked from anon/authenticated so
+                                       the function is the only writer.
+                                     - refresh_trending_scores() rewritten to
+                                       weight guest reads (0.4) and cap their
+                                       share, and to exclude the novel's own
+                                       author from every signal (not just reads).
+                                     - get_author_novel_stats() SECURITY DEFINER
+                                       function for the author-only stats panel
+                                       (library counts are otherwise RLS-locked).
   seed.sql                       Starter genres and tags
 ```
 
@@ -100,20 +117,38 @@ supabase/
   A trigger keeps the counts row in step with the reactions row.
 - **Trending is not computed on page load.** Pages read from
   `trending_scores`, refreshed hourly by `refresh_trending_scores()` via
-  pg_cron. The scoring rule (weights, activity floor, growth formula)
-  lives as a plain-English comment at the top of migration 0004 — tune
-  numbers there without having to reread the SQL.
+  pg_cron. The scoring rule (weights, activity floor, growth formula,
+  guest weighting + cap, and author-exclusion) lives as a plain-English
+  comment at the top of migration 0005 — that comment supersedes 0004's
+  earlier version. Tune numbers there without having to reread the SQL.
+- **The author must not inflate their own trending.** Every signal in
+  `refresh_trending_scores()` excludes rows produced by the novel's own
+  author. Reactions/comments/library adds by the author still work and
+  still show — they just don't move the number. The author sees their
+  own novel's raw activity in an "Only you can see this" panel on the
+  novel page, with a note explaining the trending exclusion so it
+  doesn't read as a bug.
+- **Guest reads are weighted lower AND capped.** A guest read is worth
+  0.4 of a signed-in read; the total guest contribution per novel is
+  capped at `2 + 1.5 × signed_reads`, so a novel with no signed-in
+  readers can't trend on guest reads alone. The `nt_guest` cookie is
+  HMAC-signed with `NOVELTREND_GUEST_SECRET`, so it can't be hand-edited
+  to forge a new identity per request; clearing cookies mints a new id,
+  but the cap keeps that from mattering.
 - **Blocked tags filter in the query, on every list.** Home, Trending,
   Browse, search results, and post-chapter suggestions all take a
   `Set<string>` of blocked novel ids built via `loadBlocklist()` and
   subtract before hydrating cards. Never hide with CSS afterwards. A
   direct link to a blocked novel's page still works, with a quiet notice
   at the top.
-- **Reads are fire-and-forget.** The chapter reader dispatches
-  `recordChapterRead()` in an effect but never waits for or displays its
-  result. If it fails, the chapter still shows. The action does its own
-  auth check, its own "not the novel's author" skip, and its own per-day
-  dedup via a unique index.
+- **Reads are recorded by the database, fire-and-forget from the
+  browser.** The chapter reader calls `recordChapterRead()` in an effect
+  but never waits for its result. The action is a thin RPC wrapper
+  around `record_chapter_read()`: the DB function reads `auth.uid()`
+  itself, refuses drafts, refuses the novel's own author, and ignores a
+  duplicate for that reader/day — the browser can't lie about identity.
+  Direct INSERT on `chapter_reads` is revoked from anon and
+  authenticated, so the function is the only way in.
 - **The reader is the most-used screen.** Nothing there should shift,
   flicker, or need a second tap to work. Under-paragraph counts sit in a
   fixed-height slot so the paragraph body never moves when they appear or

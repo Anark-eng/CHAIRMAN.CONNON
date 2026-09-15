@@ -60,9 +60,18 @@ Keep this page open — you'll need to paste these into Vercel next.
 3. Choose **Import Git Repository** and select this project's GitHub
    repository. (If you don't see it, use "Adjust GitHub App Permissions"
    to give Vercel access to it.)
-4. Before clicking Deploy, open **Environment Variables** and add two:
+4. Before clicking Deploy, open **Environment Variables** and add three:
    - `NEXT_PUBLIC_SUPABASE_URL` → paste your Supabase **Project URL**.
    - `NEXT_PUBLIC_SUPABASE_ANON_KEY` → paste your Supabase **anon public** key.
+   - `NOVELTREND_GUEST_SECRET` → a private random string of at least 16
+     characters. This signs the cookie that identifies logged-out
+     readers, so nobody can hand-edit it to pretend to be a new visitor
+     on every request. Any long random string works — for example, on
+     your own computer you can run `openssl rand -hex 32` in a terminal
+     and paste the result. **Keep it secret** and never share it. If you
+     later change this value, every existing logged-out reader will look
+     like a brand-new visitor to the site's trending numbers, so only
+     rotate it if you actually mean to.
 5. Click **Deploy**. After a minute or two, Vercel will give you a live
    web address, like `https://your-project.vercel.app`.
 

@@ -285,7 +285,22 @@ export interface Database {
       };
     };
     Views: Record<string, never>;
-    Functions: Record<string, never>;
+    Functions: {
+      record_chapter_read: {
+        Args: { p_chapter_id: string; p_guest_key: string | null };
+        Returns: void;
+      };
+      get_author_novel_stats: {
+        Args: { p_novel_id: string };
+        Returns: {
+          reads_7d: number;
+          library_7d: number;
+          reactions_7d: number;
+          comments_7d: number;
+          trending_rank: number | null;
+        }[];
+      };
+    };
     Enums: Record<string, never>;
     CompositeTypes: Record<string, never>;
   };
