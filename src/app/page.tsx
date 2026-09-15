@@ -1,11 +1,18 @@
 import Link from "next/link";
 import { NovelCard } from "@/components/NovelCard";
-import { getNewlyAddedNovels, getRecentlyUpdatedNovels } from "@/lib/data/novels";
+import { loadBlocklist } from "@/lib/data/blockedTags";
+import { getCurrentUserAndProfile } from "@/lib/data/profile";
+import { getNewlyAddedNovels, getRecentlyUpdatedNovels, getTrendingNovels } from "@/lib/data/novels";
+import type { NovelCardData } from "@/lib/data/types";
 
 export default async function HomePage() {
-  const [recentlyUpdated, newlyAdded] = await Promise.all([
-    getRecentlyUpdatedNovels(12),
-    getNewlyAddedNovels(12),
+  const { user } = await getCurrentUserAndProfile();
+  const { excludedNovelIds } = await loadBlocklist(user?.id ?? null);
+
+  const [trending, recentlyUpdated, newlyAdded] = await Promise.all([
+    getTrendingNovels(12, { excludedNovelIds }),
+    getRecentlyUpdatedNovels(12, { excludedNovelIds }),
+    getNewlyAddedNovels(12, { excludedNovelIds }),
   ]);
 
   return (
@@ -23,25 +30,43 @@ export default async function HomePage() {
         </Link>
       </section>
 
+      <NovelSection
+        title="Trending this week"
+        subtitle="Ranked by how fast a novel is growing, not by lifetime reads."
+        novels={trending}
+        emptyText="Nothing has picked up steam yet."
+      />
       <NovelSection title="Recently updated" novels={recentlyUpdated} />
       <NovelSection title="Newly added" novels={newlyAdded} />
     </div>
   );
 }
 
-function NovelSection({ title, novels }: { title: string; novels: Awaited<ReturnType<typeof getNewlyAddedNovels>> }) {
+function NovelSection({
+  title,
+  subtitle,
+  novels,
+  emptyText = "Nothing here yet.",
+}: {
+  title: string;
+  subtitle?: string;
+  novels: NovelCardData[];
+  emptyText?: string;
+}) {
   if (novels.length === 0) {
     return (
       <section>
-        <h2 className="mb-4 text-xl font-semibold">{title}</h2>
-        <p className="text-[var(--muted)]">Nothing here yet.</p>
+        <h2 className="mb-1 text-xl font-semibold">{title}</h2>
+        {subtitle && <p className="mb-3 text-sm text-[var(--muted)]">{subtitle}</p>}
+        <p className="text-[var(--muted)]">{emptyText}</p>
       </section>
     );
   }
 
   return (
     <section>
-      <h2 className="mb-4 text-xl font-semibold">{title}</h2>
+      <h2 className="mb-1 text-xl font-semibold">{title}</h2>
+      {subtitle && <p className="mb-4 text-sm text-[var(--muted)]">{subtitle}</p>}
       <div className="grid grid-cols-2 gap-5 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6">
         {novels.map((novel) => (
           <NovelCard key={novel.id} novel={novel} />

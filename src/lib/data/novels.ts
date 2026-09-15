@@ -32,19 +32,54 @@ function toCard(row: NovelRow): NovelCardData {
 
 const CARD_SELECT = "id, title, cover_url, status, synopsis, author_id, created_at, genres(id,name,slug), profiles(pen_name)";
 
-export async function getNewlyAddedNovels(limit = 12): Promise<NovelCardData[]> {
+// Every list query accepts `excludedNovelIds` from the caller (built
+// from the reader's blocked_tags — see src/lib/data/blockedTags.ts). We
+// filter in the query itself so blocked novels never leave the DB.
+export interface WithBlocklist {
+  excludedNovelIds?: Set<string>;
+}
+
+function applyBlocklist<R extends { id: string }>(
+  rows: R[],
+  excluded: Set<string> | undefined,
+): R[] {
+  if (!excluded || excluded.size === 0) return rows;
+  return rows.filter((r) => !excluded.has(r.id));
+}
+
+// Build an `id.not.in.(...)` postgrest filter string. `excluded` may be
+// large; when it exceeds a reasonable URL limit we fall back to a
+// client-side filter (the caller uses applyBlocklist for that path).
+function buildExcludeIdFilter(excluded: Set<string> | undefined, limit = 50): string | null {
+  if (!excluded || excluded.size === 0) return null;
+  if (excluded.size > limit) return null; // caller falls back
+  return `(${[...excluded].join(",")})`;
+}
+
+export async function getNewlyAddedNovels(
+  limit = 12,
+  opts: WithBlocklist = {},
+): Promise<NovelCardData[]> {
   const supabase = await createClient();
-  const { data, error } = await supabase
+  let q = supabase
     .from("novels")
     .select(CARD_SELECT)
     .order("created_at", { ascending: false })
-    .limit(limit);
+    .limit(limit + (opts.excludedNovelIds?.size ?? 0));
 
+  const exclude = buildExcludeIdFilter(opts.excludedNovelIds);
+  if (exclude) q = q.not("id", "in", exclude);
+
+  const { data, error } = await q;
   if (error) throw error;
-  return (data ?? []).map((row) => toCard(row as unknown as NovelRow));
+  const rows = (data ?? []).map((row) => toCard(row as unknown as NovelRow));
+  return applyBlocklist(rows, opts.excludedNovelIds).slice(0, limit);
 }
 
-export async function getRecentlyUpdatedNovels(limit = 12): Promise<NovelCardData[]> {
+export async function getRecentlyUpdatedNovels(
+  limit = 12,
+  opts: WithBlocklist = {},
+): Promise<NovelCardData[]> {
   const supabase = await createClient();
 
   const { data: recentChapters, error: chaptersError } = await supabase
@@ -52,12 +87,14 @@ export async function getRecentlyUpdatedNovels(limit = 12): Promise<NovelCardDat
     .select("novel_id, published_at")
     .eq("is_published", true)
     .order("published_at", { ascending: false })
-    .limit(200);
+    .limit(400);
 
   if (chaptersError) throw chaptersError;
 
+  const excluded = opts.excludedNovelIds;
   const orderedNovelIds: string[] = [];
   for (const chapter of recentChapters ?? []) {
+    if (excluded?.has(chapter.novel_id)) continue;
     if (!orderedNovelIds.includes(chapter.novel_id)) {
       orderedNovelIds.push(chapter.novel_id);
     }
@@ -79,12 +116,50 @@ export async function getRecentlyUpdatedNovels(limit = 12): Promise<NovelCardDat
   return orderedNovelIds.map((id) => byId.get(id)).filter((n): n is NovelCardData => Boolean(n));
 }
 
+export async function getTrendingNovels(
+  limit = 12,
+  opts: WithBlocklist = {},
+): Promise<NovelCardData[]> {
+  const supabase = await createClient();
+
+  const { data: scoreRows, error: scoreError } = await supabase
+    .from("trending_scores")
+    .select("novel_id")
+    .order("score", { ascending: false })
+    .limit(limit + (opts.excludedNovelIds?.size ?? 0));
+
+  if (scoreError) throw scoreError;
+
+  const excluded = opts.excludedNovelIds;
+  const orderedIds = (scoreRows ?? [])
+    .map((r) => r.novel_id)
+    .filter((id) => !excluded?.has(id))
+    .slice(0, limit);
+  if (orderedIds.length === 0) return [];
+
+  const { data: novels, error: novelsError } = await supabase
+    .from("novels")
+    .select(CARD_SELECT)
+    .in("id", orderedIds);
+
+  if (novelsError) throw novelsError;
+
+  const byId = new Map(
+    ((novels ?? []) as unknown as NovelRow[]).map((row) => [row.id, toCard(row)]),
+  );
+  return orderedIds.map((id) => byId.get(id)).filter((n): n is NovelCardData => Boolean(n));
+}
+
+export type SearchSort = "newest" | "trending";
+
 export interface SearchNovelsParams {
   query?: string;
   genreSlug?: string;
   includeTagSlugs?: string[];
   excludeTagSlugs?: string[];
   limit?: number;
+  sort?: SearchSort;
+  excludedNovelIds?: Set<string>;
 }
 
 export async function searchNovels({
@@ -93,12 +168,15 @@ export async function searchNovels({
   includeTagSlugs = [],
   excludeTagSlugs = [],
   limit = 40,
+  sort = "newest",
+  excludedNovelIds,
 }: SearchNovelsParams): Promise<NovelCardData[]> {
   const supabase = await createClient();
 
-  // Resolve tag slugs to ids up front.
+  // Resolve tag slugs to ids up front, then merge with the caller's
+  // (blocked-tag) excludedNovelIds so both filters apply in one pass.
   let includeNovelIds: string[] | null = null;
-  let excludedNovelIds: Set<string> = new Set();
+  const excludedFromTags: Set<string> = new Set(excludedNovelIds ?? []);
 
   if (includeTagSlugs.length > 0 || excludeTagSlugs.length > 0) {
     const { data: tagRows, error: tagError } = await supabase
@@ -134,8 +212,41 @@ export async function searchNovels({
         .select("novel_id")
         .in("tag_id", excludeIds);
       if (excludedError) throw excludedError;
-      excludedNovelIds = new Set((excludedLinks ?? []).map((l) => l.novel_id));
+      for (const l of excludedLinks ?? []) excludedFromTags.add(l.novel_id);
     }
+  }
+
+  if (sort === "trending") {
+    // Trending: read from trending_scores, then hydrate a filtered
+    // window of novel rows.
+    const { data: scoreRows, error: scoreError } = await supabase
+      .from("trending_scores")
+      .select("novel_id")
+      .order("score", { ascending: false })
+      .limit(limit * 4);
+    if (scoreError) throw scoreError;
+
+    let ids = (scoreRows ?? []).map((r) => r.novel_id).filter((id) => !excludedFromTags.has(id));
+    if (includeNovelIds) {
+      const inc = new Set(includeNovelIds);
+      ids = ids.filter((id) => inc.has(id));
+    }
+    ids = ids.slice(0, limit);
+    if (ids.length === 0) return [];
+
+    let novelsQ = supabase.from("novels").select(CARD_SELECT).in("id", ids);
+    if (query && query.trim().length > 0) novelsQ = novelsQ.ilike("title", `%${query.trim()}%`);
+    if (genreSlug) {
+      const { data: genreRow } = await supabase.from("genres").select("id").eq("slug", genreSlug).maybeSingle();
+      if (!genreRow) return [];
+      novelsQ = novelsQ.eq("genre_id", genreRow.id);
+    }
+    const { data: novels, error: novelsError } = await novelsQ;
+    if (novelsError) throw novelsError;
+    const byId = new Map(
+      ((novels ?? []) as unknown as NovelRow[]).map((row) => [row.id, toCard(row)]),
+    );
+    return ids.map((id) => byId.get(id)).filter((n): n is NovelCardData => Boolean(n));
   }
 
   let q = supabase.from("novels").select(CARD_SELECT).order("created_at", { ascending: false }).limit(limit);
@@ -157,7 +268,7 @@ export async function searchNovels({
 
   return (data ?? [])
     .map((row) => toCard(row as unknown as NovelRow))
-    .filter((n) => !excludedNovelIds.has(n.id));
+    .filter((n) => !excludedFromTags.has(n.id));
 }
 
 export async function getNovelById(novelId: string): Promise<NovelDetailData | null> {

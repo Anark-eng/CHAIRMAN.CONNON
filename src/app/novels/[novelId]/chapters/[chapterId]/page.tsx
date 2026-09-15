@@ -4,6 +4,7 @@ import { getChapterCommentCount, getParagraphCommentCounts } from "@/lib/data/co
 import { getCurrentUserAndProfile } from "@/lib/data/profile";
 import { getChapter, getChaptersForNovel, getNovelById } from "@/lib/data/novels";
 import { getMyReactionsForChapter, getReactionCountsForChapter } from "@/lib/data/reactions";
+import { getSuggestionsForNovel } from "@/lib/data/suggestions";
 import { splitParagraphs } from "@/lib/reading";
 import type { ReactionCountsShape } from "@/lib/reactions";
 import type { ReactionType } from "@/lib/supabase/database.types";
@@ -39,6 +40,17 @@ export default async function ChapterPage({
   const prevChapter = currentIndex > 0 ? orderedChapters[currentIndex - 1] : null;
   const nextChapter =
     currentIndex >= 0 && currentIndex < orderedChapters.length - 1 ? orderedChapters[currentIndex + 1] : null;
+
+  // The caught-up card only makes sense on the newest PUBLISHED chapter --
+  // never on a draft the author is previewing, and never on an earlier
+  // chapter (where the next-chapter button belongs instead).
+  const publishedOrdered = orderedChapters.filter((c) => c.is_published);
+  const newestPublished = publishedOrdered[publishedOrdered.length - 1];
+  const isNewestChapter = Boolean(newestPublished && newestPublished.id === chapter.id) && chapter.is_published;
+
+  const suggestions = isNewestChapter
+    ? await getSuggestionsForNovel(novel.id, user?.id ?? null, 3)
+    : [];
 
   const countsByIndex: Record<number, ReactionCountsShape> = {};
   for (const row of countRows) {
@@ -84,6 +96,9 @@ export default async function ChapterPage({
       reactions={reactionData}
       isLoggedIn={Boolean(user)}
       chapterCommentCount={chapterCommentCount}
+      isNewestChapter={isNewestChapter}
+      novelStatus={novel.status}
+      suggestions={suggestions}
     />
   );
 }
