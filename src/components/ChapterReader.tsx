@@ -4,6 +4,9 @@ import { useEffect, useState, useSyncExternalStore } from "react";
 import Link from "next/link";
 import { saveReadingProgress } from "@/lib/actions/progress";
 import type { Paragraph } from "@/lib/reading";
+import { EMPTY_COUNTS, type ReactionCountsShape } from "@/lib/reactions";
+import type { ReactionType } from "@/lib/supabase/database.types";
+import { ParagraphReactions } from "@/components/ParagraphReactions";
 import {
   getServerSnapshot,
   getSnapshot,
@@ -23,6 +26,12 @@ interface ChapterNavItem {
   order_number: number;
 }
 
+export interface ChapterReactionData {
+  countsByIndex: Record<number, ReactionCountsShape>;
+  myReactionsByIndex: Record<number, ReactionType[]>;
+  paragraphCommentCounts: Record<number, number>;
+}
+
 export function ChapterReader({
   novelId,
   novelTitle,
@@ -33,6 +42,9 @@ export function ChapterReader({
   nextChapter,
   tableOfContents,
   trackProgress,
+  reactions,
+  isLoggedIn,
+  chapterCommentCount,
 }: {
   novelId: string;
   novelTitle: string;
@@ -43,6 +55,9 @@ export function ChapterReader({
   nextChapter: ChapterNavItem | null;
   tableOfContents: ChapterNavItem[];
   trackProgress: boolean;
+  reactions: ChapterReactionData;
+  isLoggedIn: boolean;
+  chapterCommentCount: number;
 }) {
   const settings = useSyncExternalStore(subscribe, getSnapshot, getServerSnapshot);
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -74,6 +89,12 @@ export function ChapterReader({
             >
               Contents
             </button>
+            <Link
+              href={`/novels/${novelId}/chapters/${chapterId}/comments`}
+              className="rounded-full border border-current px-3 py-1 opacity-80 hover:opacity-100"
+            >
+              Comments{chapterCommentCount > 0 ? ` (${chapterCommentCount})` : ""}
+            </Link>
             <button
               type="button"
               onClick={() => setSettingsOpen((v) => !v)}
@@ -172,13 +193,21 @@ export function ChapterReader({
           style={{ fontSize: `${settings.fontSize}px`, lineHeight: settings.lineHeight }}
         >
           {paragraphs.map((p) => (
-            <p key={p.index} data-paragraph-index={p.index} className="mb-5">
-              {p.text}
-            </p>
+            <ParagraphReactions
+              key={p.index}
+              novelId={novelId}
+              chapterId={chapterId}
+              paragraphIndex={p.index}
+              paragraphText={p.text}
+              initialCounts={reactions.countsByIndex[p.index] ?? EMPTY_COUNTS}
+              initialMyReactions={reactions.myReactionsByIndex[p.index] ?? []}
+              initialCommentCount={reactions.paragraphCommentCounts[p.index] ?? 0}
+              isLoggedIn={isLoggedIn}
+            />
           ))}
         </div>
 
-        <div className="mt-10 flex items-center justify-between border-t border-current/20 pt-6 text-sm">
+        <div className="mt-10 flex flex-wrap items-center justify-between gap-3 border-t border-current/20 pt-6 text-sm">
           {prevChapter ? (
             <Link href={`/novels/${novelId}/chapters/${prevChapter.id}`} className="hover:underline">
               &larr; Previous chapter
@@ -186,6 +215,12 @@ export function ChapterReader({
           ) : (
             <span />
           )}
+          <Link
+            href={`/novels/${novelId}/chapters/${chapterId}/comments`}
+            className="rounded-full border border-current px-4 py-1.5 font-medium hover:opacity-90"
+          >
+            {chapterCommentCount > 0 ? `${chapterCommentCount} chapter comments` : "Leave a chapter comment"}
+          </Link>
           {nextChapter ? (
             <Link href={`/novels/${novelId}/chapters/${nextChapter.id}`} className="hover:underline">
               Next chapter &rarr;
