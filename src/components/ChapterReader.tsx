@@ -3,10 +3,13 @@
 import { useEffect, useState, useSyncExternalStore } from "react";
 import Link from "next/link";
 import { saveReadingProgress } from "@/lib/actions/progress";
+import { recordChapterRead } from "@/lib/actions/reads";
 import type { Paragraph } from "@/lib/reading";
 import { EMPTY_COUNTS, type ReactionCountsShape } from "@/lib/reactions";
 import type { ReactionType } from "@/lib/supabase/database.types";
 import { ParagraphReactions } from "@/components/ParagraphReactions";
+import { CaughtUpCard } from "@/components/CaughtUpCard";
+import type { NovelCardData, NovelStatus } from "@/lib/data/types";
 import {
   getServerSnapshot,
   getSnapshot,
@@ -45,6 +48,9 @@ export function ChapterReader({
   reactions,
   isLoggedIn,
   chapterCommentCount,
+  isNewestChapter,
+  novelStatus,
+  suggestions,
 }: {
   novelId: string;
   novelTitle: string;
@@ -58,6 +64,9 @@ export function ChapterReader({
   reactions: ChapterReactionData;
   isLoggedIn: boolean;
   chapterCommentCount: number;
+  isNewestChapter: boolean;
+  novelStatus: NovelStatus;
+  suggestions: NovelCardData[];
 }) {
   const settings = useSyncExternalStore(subscribe, getSnapshot, getServerSnapshot);
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -67,6 +76,9 @@ export function ChapterReader({
     if (trackProgress) {
       saveReadingProgress(novelId, chapterId).catch(() => {});
     }
+    // Fire-and-forget: never block the reader. The action handles auth,
+    // the "not the novel's own author" rule, and the per-day dedup itself.
+    recordChapterRead(novelId, chapterId).catch(() => {});
     window.scrollTo(0, 0);
   }, [novelId, chapterId, trackProgress]);
 
@@ -221,6 +233,7 @@ export function ChapterReader({
           >
             {chapterCommentCount > 0 ? `${chapterCommentCount} chapter comments` : "Leave a chapter comment"}
           </Link>
+          {/* Never both a next-chapter button AND a caught-up card. */}
           {nextChapter ? (
             <Link href={`/novels/${novelId}/chapters/${nextChapter.id}`} className="hover:underline">
               Next chapter &rarr;
@@ -229,6 +242,10 @@ export function ChapterReader({
             <span />
           )}
         </div>
+
+        {isNewestChapter && !nextChapter && (
+          <CaughtUpCard novelStatus={novelStatus} suggestions={suggestions} />
+        )}
       </div>
     </div>
   );

@@ -206,6 +206,62 @@ export interface Database {
         Update: Record<string, never>;
         Relationships: [];
       };
+      chapter_reads: {
+        Row: {
+          id: string;
+          chapter_id: string;
+          novel_id: string;
+          user_id: string | null;
+          guest_key: string | null;
+          read_date: string;
+          created_at: string;
+        };
+        Insert: {
+          id?: string;
+          chapter_id: string;
+          novel_id: string;
+          user_id?: string | null;
+          guest_key?: string | null;
+          read_date?: string;
+        };
+        Update: Record<string, never>;
+        Relationships: [];
+      };
+      blocked_tags: {
+        Row: { user_id: string; tag_id: string; created_at: string };
+        Insert: { user_id: string; tag_id: string };
+        Update: Record<string, never>;
+        Relationships: [];
+      };
+      trending_scores: {
+        Row: {
+          novel_id: string;
+          score: number;
+          weighted_now: number;
+          weighted_prev: number;
+          reads_now: number;
+          reads_prev: number;
+          library_now: number;
+          library_prev: number;
+          reactions_now: number;
+          comments_now: number;
+          computed_at: string;
+        };
+        Insert: {
+          novel_id: string;
+          score: number;
+          weighted_now: number;
+          weighted_prev: number;
+          reads_now?: number;
+          reads_prev?: number;
+          library_now?: number;
+          library_prev?: number;
+          reactions_now?: number;
+          comments_now?: number;
+        };
+        Update: Record<string, never>;
+        Relationships: [];
+      };
       chapter_comments: {
         Row: {
           id: string;

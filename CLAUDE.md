@@ -9,6 +9,8 @@ novels, read them, and keep them in a library.
   custom server or background workers.
 - Supabase for the Postgres database, email-and-password auth, and image
   storage (the `covers` bucket). Accessed through `@supabase/ssr`.
+- Trending refresh runs inside the database itself via **pg_cron**, so no
+  external scheduler is needed.
 - Env vars: `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY`,
   and (optional) `NEXT_PUBLIC_SITE_URL` — see `.env.example`. The app
   shows a plain setup message instead of crashing when the Supabase vars
@@ -19,23 +21,24 @@ novels, read them, and keep them in a library.
 ```
 src/
   app/                          routes (App Router)
-    page.tsx                    Home
-    browse/                     Browse (search, genre + tag filters)
+    page.tsx                    Home (Trending, Recently updated, Newly added)
+    browse/                     Browse (search, genre + tag filters, sort)
+    updates/                    Novels in library with unread chapters
     login/, signup/             Auth
     forgot-password/            Forgot-password form
     reset-password/             Set-new-password form (session-gated)
     auth/callback/route.ts      Handles confirmation & reset links
     auth/error/                 "Link expired" page
-    profile/                    Author Mode toggle
+    profile/                    Author Mode toggle + Blocked tags
     my-novels/                  An author's own novels
     library/                    A reader's saved novels
     novels/
       new/                      Create a novel
-      [novelId]/                Novel page
+      [novelId]/                Novel page (shows blocked-tag notice if applicable)
         edit/                   Edit novel details
         chapters/
           new/                  Add a chapter
-          [chapterId]/          Chapter reader
+          [chapterId]/          Chapter reader (records reads fire-and-forget)
             edit/               Edit a chapter
             comments/           Chapter-wide comments (threaded, 1 level)
             paragraphs/[i]/     Per-paragraph discussion page
@@ -44,26 +47,32 @@ src/
     ChapterCommentThread.tsx    One thread + inline reply form
     SpoilerComment.tsx          "Tap to reveal" — fetches body on demand
     CommentForm.tsx             Shared form used for para and chapter comments
+    BlockedTagsSection.tsx      Profile page tag-block toggles
+    CaughtUpCard.tsx            End-of-novel card with 3 suggestions
   lib/
     supabase/                   Supabase client setup (browser, server, middleware)
                                  + database.types.ts (hand-written, matches the SQL)
     data/                       Read queries, used from Server Components
       comments.ts                Two-pass fetch: spoilers omit body entirely
       reactions.ts               Per-paragraph running totals
+      blockedTags.ts             Blocklist load + excluded-novel-ids helper
+      suggestions.ts             Post-chapter next-read picker
+      library.ts                 Library + Updates queries
     actions/                    Server Actions (writes: auth, novels, chapters,
                                 library, reading progress, profile, reactions,
-                                comments)
+                                comments, reads, blockedTags)
     reading.ts                  Splits chapter text into indexed paragraphs
     reactions.ts                Reaction labels, emoji, thresholds
     siteUrl.ts                  Origin used for auth-email redirect links
+    guestKey.ts                 Random-id cookie for logged-out readers
 supabase/
   migrations/
-    0001_init.sql                Full initial schema + RLS + storage policies
-    0002_security_fixes.sql      Matches the live DB's security patches
-    0003_reactions_and_comments.sql
-                                 Paragraph reactions, running-total counts,
-                                 paragraph_comments, chapter_comments, RLS,
-                                 indexes. Drafts stay private (see audit note).
+    0001_init.sql                    Full initial schema + RLS + storage policies
+    0002_security_fixes.sql          Matches the live DB's security patches
+    0003_reactions_and_comments.sql  Reactions, counts, comments; drafts stay private
+    0004_trending_and_blocks.sql     chapter_reads, blocked_tags, trending_scores,
+                                     refresh_trending_scores(), pg_cron hourly job.
+                                     Plain-English scoring rule at the top.
   seed.sql                       Starter genres and tags
 ```
 
@@ -89,19 +98,34 @@ supabase/
 - **Reaction counts are running totals.** Reader queries hit
   `paragraph_reaction_counts`, never `paragraph_reactions` in aggregate.
   A trigger keeps the counts row in step with the reactions row.
+- **Trending is not computed on page load.** Pages read from
+  `trending_scores`, refreshed hourly by `refresh_trending_scores()` via
+  pg_cron. The scoring rule (weights, activity floor, growth formula)
+  lives as a plain-English comment at the top of migration 0004 — tune
+  numbers there without having to reread the SQL.
+- **Blocked tags filter in the query, on every list.** Home, Trending,
+  Browse, search results, and post-chapter suggestions all take a
+  `Set<string>` of blocked novel ids built via `loadBlocklist()` and
+  subtract before hydrating cards. Never hide with CSS afterwards. A
+  direct link to a blocked novel's page still works, with a quiet notice
+  at the top.
+- **Reads are fire-and-forget.** The chapter reader dispatches
+  `recordChapterRead()` in an effect but never waits for or displays its
+  result. If it fails, the chapter still shows. The action does its own
+  auth check, its own "not the novel's author" skip, and its own per-day
+  dedup via a unique index.
 - **The reader is the most-used screen.** Nothing there should shift,
   flicker, or need a second tap to work. Under-paragraph counts sit in a
   fixed-height slot so the paragraph body never moves when they appear or
   the reaction bar opens.
 - **Migrations are safe to run twice.** They use `create if not exists`,
-  `drop policy if exists`, and `create or replace function` where needed,
-  so the owner can rerun them without breaking a working database.
+  `drop policy if exists`, `create or replace function`, and unschedule
+  existing pg_cron jobs before rescheduling, so the owner can rerun them
+  without breaking a working database.
+- **Reading progress is the single source of truth for "unread".** Both
+  the Library "new" badge and the Updates page derive unread state from
+  the reader's last-read chapter order — don't invent a second store.
 
 ## Planned features (not built yet)
 
-- Trending: rank by how fast a novel is growing (recent reads/library
-  adds), not by total reads.
-- Blocked tags: a reader can block tags; blocked-tag novels are removed
-  before any other filtering, on every list (Home, Browse, Library).
-- "You're caught up" card with next-read suggestions, shown at the end of
-  a novel's latest chapter.
+- (Nothing outstanding from the current task set.)

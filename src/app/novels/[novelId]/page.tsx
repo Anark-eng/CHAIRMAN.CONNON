@@ -3,6 +3,7 @@ import { notFound } from "next/navigation";
 import { CoverThumb } from "@/components/CoverThumb";
 import { StatusBadge } from "@/components/StatusBadge";
 import { addToLibrary, removeFromLibrary } from "@/lib/actions/library";
+import { getBlockedTagIds } from "@/lib/data/blockedTags";
 import { getCurrentUserAndProfile } from "@/lib/data/profile";
 import { getChaptersForNovel, getNovelById } from "@/lib/data/novels";
 import { isInLibrary } from "@/lib/data/library";
@@ -21,11 +22,17 @@ export default async function NovelPage({
 
   const isOwner = user?.id === novel.author_id;
 
-  const [chapters, inLibrary, lastReadChapterId] = await Promise.all([
+  const [chapters, inLibrary, lastReadChapterId, blockedTagIds] = await Promise.all([
     getChaptersForNovel(novelId, { includeDrafts: isOwner }),
     user ? isInLibrary(user.id, novelId) : Promise.resolve(false),
     user ? getLastReadChapterId(user.id, novelId) : Promise.resolve(null),
+    getBlockedTagIds(user?.id ?? null),
   ]);
+
+  // Direct links to a blocked-tag novel still work — we just show a
+  // quiet notice at the top so the reader knows why it isn't turning up
+  // in their normal lists.
+  const blockedTagOverlap = novel.tags.filter((t) => blockedTagIds.includes(t.id));
 
   const publishedChapters = chapters.filter((c) => c.is_published);
   const firstChapter = publishedChapters[0];
@@ -35,6 +42,13 @@ export default async function NovelPage({
 
   return (
     <div className="mx-auto max-w-3xl px-4 py-8">
+      {blockedTagOverlap.length > 0 && (
+        <p className="mb-4 rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 py-2 text-sm text-[var(--muted)]">
+          This novel carries a tag you&apos;ve blocked
+          {blockedTagOverlap.length === 1 ? "" : "s"} ({blockedTagOverlap.map((t) => t.name).join(", ")}), so
+          it&apos;s hidden from your normal lists.
+        </p>
+      )}
       <div className="flex flex-col gap-6 sm:flex-row">
         <div className="w-40 shrink-0">
           <CoverThumb src={novel.cover_url} title={novel.title} />
