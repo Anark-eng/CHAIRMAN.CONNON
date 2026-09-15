@@ -1,8 +1,12 @@
 import { notFound } from "next/navigation";
-import { ChapterReader } from "@/components/ChapterReader";
+import { ChapterReader, type ChapterReactionData } from "@/components/ChapterReader";
+import { getChapterCommentCount, getParagraphCommentCounts } from "@/lib/data/comments";
 import { getCurrentUserAndProfile } from "@/lib/data/profile";
 import { getChapter, getChaptersForNovel, getNovelById } from "@/lib/data/novels";
+import { getMyReactionsForChapter, getReactionCountsForChapter } from "@/lib/data/reactions";
 import { splitParagraphs } from "@/lib/reading";
+import type { ReactionCountsShape } from "@/lib/reactions";
+import type { ReactionType } from "@/lib/supabase/database.types";
 
 export default async function ChapterPage({
   params,
@@ -16,7 +20,15 @@ export default async function ChapterPage({
   if (!novel || !chapter) notFound();
 
   const isOwner = user?.id === novel.author_id;
-  const chapters = await getChaptersForNovel(novelId, { includeDrafts: false });
+  const paragraphs = splitParagraphs(chapter.body);
+
+  const [chapters, countRows, myReactions, paragraphCommentCounts, chapterCommentCount] = await Promise.all([
+    getChaptersForNovel(novelId, { includeDrafts: false }),
+    getReactionCountsForChapter(chapter.id),
+    user ? getMyReactionsForChapter(user.id, chapter.id) : Promise.resolve([]),
+    getParagraphCommentCounts(chapter.id, paragraphs.map((p) => p.index)),
+    getChapterCommentCount(chapter.id),
+  ]);
 
   const orderedChapters = chapter.is_published
     ? chapters
@@ -28,17 +40,50 @@ export default async function ChapterPage({
   const nextChapter =
     currentIndex >= 0 && currentIndex < orderedChapters.length - 1 ? orderedChapters[currentIndex + 1] : null;
 
+  const countsByIndex: Record<number, ReactionCountsShape> = {};
+  for (const row of countRows) {
+    countsByIndex[row.paragraph_index] = {
+      shocked: row.shocked,
+      heartbreak: row.heartbreak,
+      laughed: row.laughed,
+      goosebumps: row.goosebumps,
+      best_line: row.best_line,
+      confused: row.confused,
+      total: row.total,
+    };
+  }
+
+  const myReactionsByIndex: Record<number, ReactionType[]> = {};
+  for (const row of myReactions) {
+    const list = myReactionsByIndex[row.paragraph_index] ?? (myReactionsByIndex[row.paragraph_index] = []);
+    list.push(row.reaction_type);
+  }
+
+  const commentCountsByIndex: Record<number, number> = {};
+  paragraphCommentCounts.forEach((count, idx) => {
+    commentCountsByIndex[idx] = count;
+  });
+
+  const reactionData: ChapterReactionData = {
+    countsByIndex,
+    myReactionsByIndex,
+    paragraphCommentCounts: commentCountsByIndex,
+  };
+
   return (
     <ChapterReader
       novelId={novelId}
       novelTitle={novel.title}
       chapterId={chapter.id}
       chapterTitle={chapter.title}
-      paragraphs={splitParagraphs(chapter.body)}
+      paragraphs={paragraphs}
       prevChapter={prevChapter}
       nextChapter={nextChapter}
       tableOfContents={chapters}
       trackProgress={Boolean(user) && chapter.is_published && !isOwner}
+      reactions={reactionData}
+      isLoggedIn={Boolean(user)}
+      chapterCommentCount={chapterCommentCount}
     />
   );
 }

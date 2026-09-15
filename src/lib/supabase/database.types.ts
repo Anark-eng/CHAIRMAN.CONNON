@@ -3,6 +3,23 @@
 
 export type NovelStatus = "ongoing" | "completed" | "hiatus";
 
+export type ReactionType =
+  | "shocked"
+  | "heartbreak"
+  | "laughed"
+  | "goosebumps"
+  | "best_line"
+  | "confused";
+
+export const REACTION_TYPES: ReactionType[] = [
+  "shocked",
+  "heartbreak",
+  "laughed",
+  "goosebumps",
+  "best_line",
+  "confused",
+];
+
 export interface Database {
   public: {
     Tables: {
@@ -128,6 +145,86 @@ export interface Database {
           chapter_id?: string;
           updated_at?: string;
         };
+        Relationships: [];
+      };
+      paragraph_reactions: {
+        Row: {
+          id: string;
+          user_id: string;
+          chapter_id: string;
+          paragraph_index: number;
+          reaction_type: ReactionType;
+          created_at: string;
+        };
+        Insert: {
+          id?: string;
+          user_id: string;
+          chapter_id: string;
+          paragraph_index: number;
+          reaction_type: ReactionType;
+        };
+        Update: Record<string, never>;
+        Relationships: [];
+      };
+      paragraph_reaction_counts: {
+        Row: {
+          chapter_id: string;
+          paragraph_index: number;
+          shocked: number;
+          heartbreak: number;
+          laughed: number;
+          goosebumps: number;
+          best_line: number;
+          confused: number;
+          total: number;
+        };
+        Insert: {
+          chapter_id: string;
+          paragraph_index: number;
+        };
+        Update: Record<string, never>;
+        Relationships: [];
+      };
+      paragraph_comments: {
+        Row: {
+          id: string;
+          user_id: string;
+          chapter_id: string;
+          paragraph_index: number;
+          body: string;
+          is_spoiler: boolean;
+          created_at: string;
+        };
+        Insert: {
+          id?: string;
+          user_id: string;
+          chapter_id: string;
+          paragraph_index: number;
+          body: string;
+          is_spoiler?: boolean;
+        };
+        Update: Record<string, never>;
+        Relationships: [];
+      };
+      chapter_comments: {
+        Row: {
+          id: string;
+          user_id: string;
+          chapter_id: string;
+          parent_id: string | null;
+          body: string;
+          is_spoiler: boolean;
+          created_at: string;
+        };
+        Insert: {
+          id?: string;
+          user_id: string;
+          chapter_id: string;
+          parent_id?: string | null;
+          body: string;
+          is_spoiler?: boolean;
+        };
+        Update: Record<string, never>;
         Relationships: [];
       };
     };
