@@ -3,59 +3,42 @@
 import { createClient } from "@/lib/supabase/server";
 import { ensureGuestKey } from "@/lib/guestKey";
 
-// Record that a reader read this chapter. Called fire-and-forget from
-// the reader page (see ChapterReader's effect). Never blocks or throws:
-// if anything goes wrong, the chapter still shows. The DB has a
-// (chapter, reader, day) unique index, so repeat calls on the same day
-// are a no-op.
+// Ask the database to record a read. All the deciding — is the chapter
+// published? who is the caller? is the caller the novel's own author?
+// is this a duplicate for today? — happens inside record_chapter_read()
+// (see migration 0005). The browser can't lie about identity because
+// the function reads auth.uid() itself.
 //
-// Skips:
-//   - the novel's own author reading their own novel (would inflate
-//     trending in the author's favour).
-//   - draft chapters (nothing to trend on).
-export async function recordChapterRead(novelId: string, chapterId: string): Promise<void> {
+// Fire-and-forget: called from the ChapterReader's effect, but the
+// reader never waits for it and a failure never affects the page.
+export async function recordChapterRead(_novelId: string, chapterId: string): Promise<void> {
   try {
     const supabase = await createClient();
 
-    // Confirm the chapter is published and grab its author id in one round.
-    const { data: chapterData } = await supabase
-      .from("chapters")
-      .select("id, is_published, novels!inner(author_id)")
-      .eq("id", chapterId)
-      .maybeSingle();
-
-    const chapter = chapterData as unknown as
-      | { id: string; is_published: boolean; novels: { author_id: string } }
-      | null;
-
-    if (!chapter || !chapter.is_published) return;
-    const authorId = chapter.novels.author_id;
-
+    // For a signed-in caller the DB function ignores the guest_key
+    // argument entirely. Only mint (and pass) one when we know we're
+    // guest — otherwise a signed-in reader with no NOVELTREND_GUEST_SECRET
+    // set would throw before we ever hit the DB.
     const {
       data: { user },
     } = await supabase.auth.getUser();
 
-    if (user) {
-      // Don't count an author's read of their own novel.
-      if (user.id === authorId) return;
-
-      await supabase
-        .from("chapter_reads")
-        .insert({ chapter_id: chapterId, novel_id: novelId, user_id: user.id })
-        // Duplicate-key errors are the point of the per-day unique index --
-        // swallow them silently by ignoring the returned error below.
-        .select()
-        .maybeSingle();
-      return;
+    let guestKey: string | null = null;
+    if (!user) {
+      try {
+        guestKey = await ensureGuestKey();
+      } catch {
+        // NOVELTREND_GUEST_SECRET not set: quietly skip recording rather
+        // than fall back to a forgeable id. Fire-and-forget already
+        // guarantees the page still shows.
+        return;
+      }
     }
 
-    // Guest: mint or reuse a cookie id.
-    const guestKey = await ensureGuestKey();
-    await supabase
-      .from("chapter_reads")
-      .insert({ chapter_id: chapterId, novel_id: novelId, guest_key: guestKey })
-      .select()
-      .maybeSingle();
+    await supabase.rpc("record_chapter_read", {
+      p_chapter_id: chapterId,
+      p_guest_key: guestKey,
+    });
   } catch {
     // Fire-and-forget: never surface an error to the reader.
   }

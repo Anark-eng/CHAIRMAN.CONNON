@@ -2,7 +2,9 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { CoverThumb } from "@/components/CoverThumb";
 import { StatusBadge } from "@/components/StatusBadge";
+import { AuthorStatsPanel } from "@/components/AuthorStatsPanel";
 import { addToLibrary, removeFromLibrary } from "@/lib/actions/library";
+import { getAuthorNovelStats } from "@/lib/data/authorStats";
 import { getBlockedTagIds } from "@/lib/data/blockedTags";
 import { getCurrentUserAndProfile } from "@/lib/data/profile";
 import { getChaptersForNovel, getNovelById } from "@/lib/data/novels";
@@ -22,11 +24,12 @@ export default async function NovelPage({
 
   const isOwner = user?.id === novel.author_id;
 
-  const [chapters, inLibrary, lastReadChapterId, blockedTagIds] = await Promise.all([
+  const [chapters, inLibrary, lastReadChapterId, blockedTagIds, authorStats] = await Promise.all([
     getChaptersForNovel(novelId, { includeDrafts: isOwner }),
     user ? isInLibrary(user.id, novelId) : Promise.resolve(false),
     user ? getLastReadChapterId(user.id, novelId) : Promise.resolve(null),
     getBlockedTagIds(user?.id ?? null),
+    isOwner ? getAuthorNovelStats(novelId) : Promise.resolve(null),
   ]);
 
   // Direct links to a blocked-tag novel still work — we just show a
@@ -122,6 +125,8 @@ export default async function NovelPage({
           </div>
         </div>
       </div>
+
+      {isOwner && authorStats && <AuthorStatsPanel stats={authorStats} />}
 
       <section className="mt-10">
         <h2 className="mb-3 text-lg font-semibold">Chapters</h2>
