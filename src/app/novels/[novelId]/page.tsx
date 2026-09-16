@@ -14,6 +14,7 @@ import { getChaptersForNovel, getNovelById } from "@/lib/data/novels";
 import { isInLibrary } from "@/lib/data/library";
 import { getLastReadChapterId } from "@/lib/data/progress";
 import { getMyRatingFor, getRatingSummary } from "@/lib/data/ratings";
+import { demographicLabel } from "@/lib/classification";
 import { BOARD_MIN_QUALIFIERS, type BoardKey } from "@/lib/rankings";
 
 export default async function NovelPage({
@@ -90,9 +91,18 @@ export default async function NovelPage({
           <h1 className="text-2xl font-semibold">{novel.title}</h1>
           <p className="mt-1 text-[var(--muted)]">by {novel.authorPenName ?? "Unknown author"}</p>
 
-          <div className="mt-2 flex flex-wrap items-center gap-2">
+          <div className="mt-2 flex flex-wrap items-center gap-x-2 gap-y-1">
             <StatusBadge status={novel.status} />
-            {novel.genre && <span className="text-sm text-[var(--muted)]">{novel.genre.name}</span>}
+            {novel.demographic && (
+              <span className="rounded-full bg-[var(--border)] px-2 py-0.5 text-xs font-medium uppercase tracking-wide text-[var(--muted)]">
+                {demographicLabel(novel.demographic)}
+              </span>
+            )}
+            {novel.genres.map((g) => (
+              <span key={g.id} className="text-sm text-[var(--muted)]">
+                {g.name}
+              </span>
+            ))}
           </div>
 
           {novel.tags.length > 0 && (

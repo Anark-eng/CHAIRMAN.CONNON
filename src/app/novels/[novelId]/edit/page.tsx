@@ -2,7 +2,7 @@ import { notFound, redirect } from "next/navigation";
 import { DeleteNovelButton } from "@/components/DeleteNovelButton";
 import { NovelForm } from "@/components/NovelForm";
 import { updateNovel } from "@/lib/actions/novels";
-import { getGenres, getTags } from "@/lib/data/taxonomy";
+import { getGenres, getTagsForAuthorForm } from "@/lib/data/taxonomy";
 import { getCurrentUserAndProfile } from "@/lib/data/profile";
 import { getNovelById } from "@/lib/data/novels";
 
@@ -15,7 +15,14 @@ export default async function EditNovelPage({
   const { user } = await getCurrentUserAndProfile();
   if (!user) redirect("/login");
 
-  const [novel, genres, tags] = await Promise.all([getNovelById(novelId), getGenres(), getTags()]);
+  const [novel, genres, tags] = await Promise.all([
+    getNovelById(novelId),
+    getGenres(),
+    // Author-facing tag pool: approved tags + any tags this novel is
+    // already carrying (which may include unapproved author-created
+    // ones from before).
+    getTagsForAuthorForm(novelId),
+  ]);
   if (!novel) notFound();
   if (novel.author_id !== user.id) redirect(`/novels/${novelId}`);
 
@@ -32,7 +39,8 @@ export default async function EditNovelPage({
         initial={{
           title: novel.title,
           synopsis: novel.synopsis,
-          genreId: novel.genre?.id ?? null,
+          genreIds: novel.genres.map((g) => g.id),
+          demographic: novel.demographic,
           status: novel.status,
           tagIds: novel.tags.map((t) => t.id),
           coverUrl: novel.cover_url,

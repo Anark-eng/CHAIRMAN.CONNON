@@ -4,16 +4,24 @@ import { randomUUID } from "crypto";
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
-import type { Database, NovelStatus } from "@/lib/supabase/database.types";
+import type { Database, Demographic, NovelStatus } from "@/lib/supabase/database.types";
+import { MAX_GENRES_PER_NOVEL } from "@/lib/classification";
 
 export interface NovelActionState {
   error?: string;
 }
 
 const STATUSES: NovelStatus[] = ["ongoing", "completed", "hiatus"];
+const DEMOGRAPHIC_VALUES: Demographic[] = ["shounen", "shoujo", "seinen", "josei", "general"];
 
-function readTagIds(formData: FormData): string[] {
-  return formData.getAll("tag_ids").map(String).filter(Boolean);
+function readIds(formData: FormData, name: string): string[] {
+  return Array.from(new Set(formData.getAll(name).map(String).filter(Boolean)));
+}
+
+function readDemographic(formData: FormData): Demographic | null {
+  const raw = String(formData.get("demographic") ?? "").trim();
+  if (!raw) return null;
+  return DEMOGRAPHIC_VALUES.includes(raw as Demographic) ? (raw as Demographic) : null;
 }
 
 async function requireAuthor() {
@@ -22,9 +30,7 @@ async function requireAuthor() {
     data: { user },
   } = await supabase.auth.getUser();
 
-  if (!user) {
-    return { supabase, user: null, isAuthor: false };
-  }
+  if (!user) return { supabase, user: null, isAuthor: false };
 
   const { data: profile } = await supabase
     .from("profiles")
@@ -59,6 +65,27 @@ async function uploadCover(
   return data.publicUrl;
 }
 
+// Replace the novel's genre set. The DB also enforces the 9-cap via a
+// trigger; the app-side check gives a friendlier error before the round
+// trip.
+async function writeNovelGenres(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  novelId: string,
+  genreIds: string[],
+): Promise<{ error?: string }> {
+  if (genreIds.length > MAX_GENRES_PER_NOVEL) {
+    return { error: `A novel can carry up to ${MAX_GENRES_PER_NOVEL} genres.` };
+  }
+  await supabase.from("novel_genres").delete().eq("novel_id", novelId);
+  if (genreIds.length > 0) {
+    const { error } = await supabase
+      .from("novel_genres")
+      .insert(genreIds.map((genre_id) => ({ novel_id: novelId, genre_id })));
+    if (error) return { error: error.message };
+  }
+  return {};
+}
+
 export async function createNovel(
   _prevState: NovelActionState,
   formData: FormData,
@@ -70,22 +97,21 @@ export async function createNovel(
 
   const title = String(formData.get("title") ?? "").trim();
   const synopsis = String(formData.get("synopsis") ?? "").trim();
-  const genreId = String(formData.get("genre_id") ?? "").trim();
   const status = String(formData.get("status") ?? "ongoing") as NovelStatus;
+  const demographic = readDemographic(formData);
+  const genreIds = readIds(formData, "genre_ids");
+  const tagIds = readIds(formData, "tag_ids");
   const cover = formData.get("cover") as File | null;
 
   if (!title) return { error: "Give your novel a title." };
   if (!STATUSES.includes(status)) return { error: "Pick a valid status." };
+  if (genreIds.length > MAX_GENRES_PER_NOVEL) {
+    return { error: `A novel can carry up to ${MAX_GENRES_PER_NOVEL} genres.` };
+  }
 
   const { data: novel, error } = await supabase
     .from("novels")
-    .insert({
-      author_id: user.id,
-      title,
-      synopsis,
-      genre_id: genreId || null,
-      status,
-    })
+    .insert({ author_id: user.id, title, synopsis, demographic, status })
     .select("id")
     .single();
 
@@ -101,7 +127,9 @@ export async function createNovel(
       }
     }
 
-    const tagIds = readTagIds(formData);
+    const genreResult = await writeNovelGenres(supabase, novel.id, genreIds);
+    if (genreResult.error) return { error: genreResult.error };
+
     if (tagIds.length > 0) {
       await supabase.from("novel_tags").insert(tagIds.map((tag_id) => ({ novel_id: novel.id, tag_id })));
     }
@@ -134,18 +162,23 @@ export async function updateNovel(
 
   const title = String(formData.get("title") ?? "").trim();
   const synopsis = String(formData.get("synopsis") ?? "").trim();
-  const genreId = String(formData.get("genre_id") ?? "").trim();
   const status = String(formData.get("status") ?? "ongoing") as NovelStatus;
+  const demographic = readDemographic(formData);
+  const genreIds = readIds(formData, "genre_ids");
+  const tagIds = readIds(formData, "tag_ids");
   const cover = formData.get("cover") as File | null;
 
   if (!title) return { error: "Give your novel a title." };
   if (!STATUSES.includes(status)) return { error: "Pick a valid status." };
+  if (genreIds.length > MAX_GENRES_PER_NOVEL) {
+    return { error: `A novel can carry up to ${MAX_GENRES_PER_NOVEL} genres.` };
+  }
 
   try {
     const update: Database["public"]["Tables"]["novels"]["Update"] = {
       title,
       synopsis,
-      genre_id: genreId || null,
+      demographic,
       status,
     };
 
@@ -157,8 +190,10 @@ export async function updateNovel(
     const { error } = await supabase.from("novels").update(update).eq("id", novelId);
     if (error) throw new Error(error.message);
 
+    const genreResult = await writeNovelGenres(supabase, novelId, genreIds);
+    if (genreResult.error) return { error: genreResult.error };
+
     await supabase.from("novel_tags").delete().eq("novel_id", novelId);
-    const tagIds = readTagIds(formData);
     if (tagIds.length > 0) {
       await supabase.from("novel_tags").insert(tagIds.map((tag_id) => ({ novel_id: novelId, tag_id })));
     }

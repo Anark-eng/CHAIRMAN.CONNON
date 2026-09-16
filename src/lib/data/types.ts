@@ -1,6 +1,6 @@
-import type { NovelStatus } from "@/lib/supabase/database.types";
+import type { Demographic, NovelStatus } from "@/lib/supabase/database.types";
 
-export type { NovelStatus };
+export type { Demographic, NovelStatus };
 
 export interface GenreOption {
   id: string;
@@ -12,6 +12,7 @@ export interface TagOption {
   id: string;
   name: string;
   slug: string;
+  is_approved?: boolean;
 }
 
 export interface NovelCardData {
@@ -20,7 +21,8 @@ export interface NovelCardData {
   cover_url: string | null;
   status: NovelStatus;
   authorPenName: string | null;
-  genre: GenreOption | null;
+  demographic: Demographic | null;
+  genres: GenreOption[];
 }
 
 export interface NovelDetailData extends NovelCardData {

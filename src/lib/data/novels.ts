@@ -2,39 +2,51 @@ import { createClient } from "@/lib/supabase/server";
 import type {
   ChapterDetail,
   ChapterSummary,
+  Demographic,
+  GenreOption,
   NovelCardData,
   NovelDetailData,
   TagOption,
 } from "./types";
 
-type NovelRow = {
+// A novel row shaped for card rendering. novel_genres → genres gives
+// us the many-genre list; profiles carries the author's pen name.
+export type NovelRow = {
   id: string;
   title: string;
   cover_url: string | null;
   status: "ongoing" | "completed" | "hiatus";
   synopsis: string;
   author_id: string;
+  demographic: Demographic | null;
   created_at: string;
-  genres: { id: string; name: string; slug: string } | null;
+  novel_genres: { genres: GenreOption | null }[] | null;
   profiles: { pen_name: string | null } | null;
 };
 
-function toCard(row: NovelRow): NovelCardData {
+export function novelGenres(row: Pick<NovelRow, "novel_genres">): GenreOption[] {
+  return (row.novel_genres ?? [])
+    .map((ng) => ng.genres)
+    .filter((g): g is GenreOption => Boolean(g));
+}
+
+export function toCard(row: NovelRow): NovelCardData {
   return {
     id: row.id,
     title: row.title,
     cover_url: row.cover_url,
     status: row.status,
     authorPenName: row.profiles?.pen_name ?? null,
-    genre: row.genres,
+    demographic: row.demographic ?? null,
+    genres: novelGenres(row),
   };
 }
 
-const CARD_SELECT = "id, title, cover_url, status, synopsis, author_id, created_at, genres(id,name,slug), profiles(pen_name)";
+// The row shape used across all list queries. Multiple genres come
+// through the join table.
+export const CARD_SELECT =
+  "id, title, cover_url, status, synopsis, author_id, created_at, demographic, novel_genres(genres(id,name,slug)), profiles(pen_name)";
 
-// Every list query accepts `excludedNovelIds` from the caller (built
-// from the reader's blocked_tags — see src/lib/data/blockedTags.ts). We
-// filter in the query itself so blocked novels never leave the DB.
 export interface WithBlocklist {
   excludedNovelIds?: Set<string>;
 }
@@ -47,12 +59,9 @@ function applyBlocklist<R extends { id: string }>(
   return rows.filter((r) => !excluded.has(r.id));
 }
 
-// Build an `id.not.in.(...)` postgrest filter string. `excluded` may be
-// large; when it exceeds a reasonable URL limit we fall back to a
-// client-side filter (the caller uses applyBlocklist for that path).
 function buildExcludeIdFilter(excluded: Set<string> | undefined, limit = 50): string | null {
   if (!excluded || excluded.size === 0) return null;
-  if (excluded.size > limit) return null; // caller falls back
+  if (excluded.size > limit) return null;
   return `(${[...excluded].join(",")})`;
 }
 
@@ -162,6 +171,19 @@ export interface SearchNovelsParams {
   excludedNovelIds?: Set<string>;
 }
 
+// Resolve a genre slug to the set of novel ids carrying that genre.
+// Returns null if the slug doesn't match any genre (caller returns []).
+async function novelIdsForGenreSlug(genreSlug: string): Promise<Set<string> | null> {
+  const supabase = await createClient();
+  const { data: genreRow } = await supabase.from("genres").select("id").eq("slug", genreSlug).maybeSingle();
+  if (!genreRow) return null;
+  const { data: links } = await supabase
+    .from("novel_genres")
+    .select("novel_id")
+    .eq("genre_id", genreRow.id);
+  return new Set((links ?? []).map((l) => l.novel_id));
+}
+
 export async function searchNovels({
   query,
   genreSlug,
@@ -175,7 +197,7 @@ export async function searchNovels({
 
   // Resolve tag slugs to ids up front, then merge with the caller's
   // (blocked-tag) excludedNovelIds so both filters apply in one pass.
-  let includeNovelIds: string[] | null = null;
+  let includeNovelIds: Set<string> | null = null;
   const excludedFromTags: Set<string> = new Set(excludedNovelIds ?? []);
 
   if (includeTagSlugs.length > 0 || excludeTagSlugs.length > 0) {
@@ -199,11 +221,14 @@ export async function searchNovels({
       for (const link of links ?? []) {
         countByNovel.set(link.novel_id, (countByNovel.get(link.novel_id) ?? 0) + 1);
       }
-      includeNovelIds = [...countByNovel.entries()]
-        .filter(([, count]) => count >= includeIds.length)
-        .map(([id]) => id);
+      const includedFromTags = new Set(
+        [...countByNovel.entries()]
+          .filter(([, count]) => count >= includeIds.length)
+          .map(([id]) => id),
+      );
 
-      if (includeNovelIds.length === 0) return [];
+      if (includedFromTags.size === 0) return [];
+      includeNovelIds = includedFromTags;
     }
 
     if (excludeIds.length > 0) {
@@ -216,9 +241,23 @@ export async function searchNovels({
     }
   }
 
+  // A novel now carries several genres. Choosing a genre in Browse finds
+  // every novel that carries it — resolve slug → id set via the join
+  // table, then intersect with any tag-based inclusion.
+  if (genreSlug) {
+    const genreNovelIds = await novelIdsForGenreSlug(genreSlug);
+    if (genreNovelIds === null || genreNovelIds.size === 0) return [];
+    if (includeNovelIds === null) {
+      includeNovelIds = genreNovelIds;
+    } else {
+      const intersect = new Set<string>();
+      for (const id of includeNovelIds) if (genreNovelIds.has(id)) intersect.add(id);
+      if (intersect.size === 0) return [];
+      includeNovelIds = intersect;
+    }
+  }
+
   if (sort === "trending") {
-    // Trending: read from trending_scores, then hydrate a filtered
-    // window of novel rows.
     const { data: scoreRows, error: scoreError } = await supabase
       .from("trending_scores")
       .select("novel_id")
@@ -227,20 +266,12 @@ export async function searchNovels({
     if (scoreError) throw scoreError;
 
     let ids = (scoreRows ?? []).map((r) => r.novel_id).filter((id) => !excludedFromTags.has(id));
-    if (includeNovelIds) {
-      const inc = new Set(includeNovelIds);
-      ids = ids.filter((id) => inc.has(id));
-    }
+    if (includeNovelIds) ids = ids.filter((id) => includeNovelIds!.has(id));
     ids = ids.slice(0, limit);
     if (ids.length === 0) return [];
 
     let novelsQ = supabase.from("novels").select(CARD_SELECT).in("id", ids);
     if (query && query.trim().length > 0) novelsQ = novelsQ.ilike("title", `%${query.trim()}%`);
-    if (genreSlug) {
-      const { data: genreRow } = await supabase.from("genres").select("id").eq("slug", genreSlug).maybeSingle();
-      if (!genreRow) return [];
-      novelsQ = novelsQ.eq("genre_id", genreRow.id);
-    }
     const { data: novels, error: novelsError } = await novelsQ;
     if (novelsError) throw novelsError;
     const byId = new Map(
@@ -250,18 +281,8 @@ export async function searchNovels({
   }
 
   let q = supabase.from("novels").select(CARD_SELECT).order("created_at", { ascending: false }).limit(limit);
-
-  if (query && query.trim().length > 0) {
-    q = q.ilike("title", `%${query.trim()}%`);
-  }
-  if (genreSlug) {
-    const { data: genreRow } = await supabase.from("genres").select("id").eq("slug", genreSlug).maybeSingle();
-    if (!genreRow) return [];
-    q = q.eq("genre_id", genreRow.id);
-  }
-  if (includeNovelIds) {
-    q = q.in("id", includeNovelIds);
-  }
+  if (query && query.trim().length > 0) q = q.ilike("title", `%${query.trim()}%`);
+  if (includeNovelIds) q = q.in("id", [...includeNovelIds]);
 
   const { data, error } = await q;
   if (error) throw error;
@@ -277,7 +298,7 @@ export async function getNovelById(novelId: string): Promise<NovelDetailData | n
   const { data, error } = await supabase
     .from("novels")
     .select(
-      "id, title, cover_url, status, synopsis, author_id, created_at, genres(id,name,slug), profiles(pen_name), novel_tags(tags(id,name,slug))",
+      "id, title, cover_url, status, synopsis, author_id, created_at, demographic, novel_genres(genres(id,name,slug)), profiles(pen_name), novel_tags(tags(id,name,slug,is_approved))",
     )
     .eq("id", novelId)
     .maybeSingle();
@@ -307,9 +328,7 @@ export async function getChaptersForNovel(
     .eq("novel_id", novelId)
     .order("order_number", { ascending: true });
 
-  if (!includeDrafts) {
-    q = q.eq("is_published", true);
-  }
+  if (!includeDrafts) q = q.eq("is_published", true);
 
   const { data, error } = await q;
   if (error) throw error;

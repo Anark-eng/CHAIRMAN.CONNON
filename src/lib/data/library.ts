@@ -1,19 +1,11 @@
 import { createClient } from "@/lib/supabase/server";
-import type { NovelCardData, NovelStatus } from "./types";
+import type { NovelCardData } from "./types";
+import { CARD_SELECT, toCard, type NovelRow } from "./novels";
 
 export interface LibraryItem {
   novel: NovelCardData;
   hasUnread: boolean;
 }
-
-type LibraryNovelRow = {
-  id: string;
-  title: string;
-  cover_url: string | null;
-  status: NovelStatus;
-  genres: { id: string; name: string; slug: string } | null;
-  profiles: { pen_name: string | null } | null;
-};
 
 export async function getLibrary(userId: string): Promise<LibraryItem[]> {
   const supabase = await createClient();
@@ -30,10 +22,7 @@ export async function getLibrary(userId: string): Promise<LibraryItem[]> {
   const novelIds = entries.map((e) => e.novel_id);
 
   const [{ data: novels, error: novelsError }, { data: progress }, { data: chapterCounts }] = await Promise.all([
-    supabase
-      .from("novels")
-      .select("id, title, cover_url, status, synopsis, author_id, created_at, genres(id,name,slug), profiles(pen_name)")
-      .in("id", novelIds),
+    supabase.from("novels").select(CARD_SELECT).in("id", novelIds),
     supabase
       .from("reading_progress")
       .select("novel_id, chapters(order_number)")
@@ -55,9 +44,7 @@ export async function getLibrary(userId: string): Promise<LibraryItem[]> {
     if (p.chapters) lastReadOrderByNovel.set(p.novel_id, p.chapters.order_number);
   }
 
-  const novelsById = new Map(
-    ((novels ?? []) as unknown as LibraryNovelRow[]).map((n) => [n.id, n]),
-  );
+  const novelsById = new Map(((novels ?? []) as unknown as NovelRow[]).map((n) => [n.id, n]));
 
   const items: LibraryItem[] = [];
   for (const novelId of novelIds) {
@@ -68,17 +55,7 @@ export async function getLibrary(userId: string): Promise<LibraryItem[]> {
     const lastReadOrder = lastReadOrderByNovel.get(novelId) ?? -1;
     const hasUnread = latestOrder > lastReadOrder;
 
-    items.push({
-      novel: {
-        id: novel.id,
-        title: novel.title,
-        cover_url: novel.cover_url,
-        status: novel.status,
-        authorPenName: novel.profiles?.pen_name ?? null,
-        genre: novel.genres,
-      },
-      hasUnread,
-    });
+    items.push({ novel: toCard(novel), hasUnread });
   }
 
   return items;
@@ -87,12 +64,9 @@ export async function getLibrary(userId: string): Promise<LibraryItem[]> {
 export interface UpdateItem {
   novel: NovelCardData;
   unreadCount: number;
-  latestChapterAt: string; // published_at of the newest published chapter
+  latestChapterAt: string;
 }
 
-// For the Updates page. Same source of truth as the library:
-// reading_progress + published chapters. Only novels with at least one
-// unread chapter are returned, newest-updated first.
 export async function getLibraryUpdates(userId: string): Promise<UpdateItem[]> {
   const supabase = await createClient();
 
@@ -108,10 +82,7 @@ export async function getLibraryUpdates(userId: string): Promise<UpdateItem[]> {
     { data: progress },
     { data: publishedChapters, error: chaptersError },
   ] = await Promise.all([
-    supabase
-      .from("novels")
-      .select("id, title, cover_url, status, synopsis, author_id, created_at, genres(id,name,slug), profiles(pen_name)")
-      .in("id", novelIds),
+    supabase.from("novels").select(CARD_SELECT).in("id", novelIds),
     supabase
       .from("reading_progress")
       .select("novel_id, chapters(order_number)")
@@ -132,7 +103,6 @@ export async function getLibraryUpdates(userId: string): Promise<UpdateItem[]> {
     if (p.chapters) lastReadOrderByNovel.set(p.novel_id, p.chapters.order_number);
   }
 
-  // Count unread chapters + track the newest published_at per novel.
   const unreadCountByNovel = new Map<string, number>();
   const newestByNovel = new Map<string, string>();
   for (const c of publishedChapters ?? []) {
@@ -146,9 +116,7 @@ export async function getLibraryUpdates(userId: string): Promise<UpdateItem[]> {
     }
   }
 
-  const novelsById = new Map(
-    ((novels ?? []) as unknown as LibraryNovelRow[]).map((n) => [n.id, n]),
-  );
+  const novelsById = new Map(((novels ?? []) as unknown as NovelRow[]).map((n) => [n.id, n]));
 
   const items: UpdateItem[] = [];
   for (const novelId of novelIds) {
@@ -157,14 +125,7 @@ export async function getLibraryUpdates(userId: string): Promise<UpdateItem[]> {
     const novel = novelsById.get(novelId);
     if (!novel) continue;
     items.push({
-      novel: {
-        id: novel.id,
-        title: novel.title,
-        cover_url: novel.cover_url,
-        status: novel.status,
-        authorPenName: novel.profiles?.pen_name ?? null,
-        genre: novel.genres,
-      },
+      novel: toCard(novel),
       unreadCount: unread,
       latestChapterAt: newestByNovel.get(novelId) ?? "",
     });
