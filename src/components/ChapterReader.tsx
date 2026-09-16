@@ -1,7 +1,6 @@
 "use client";
 
 import { useEffect, useState, useSyncExternalStore } from "react";
-import Link from "next/link";
 import { saveReadingProgress } from "@/lib/actions/progress";
 import { recordChapterRead } from "@/lib/actions/reads";
 import type { Paragraph } from "@/lib/chapterContent";
@@ -10,25 +9,27 @@ import type { ReactionType } from "@/lib/supabase/database.types";
 import { ParagraphReactions } from "@/components/ParagraphReactions";
 import { AuthorNote } from "@/components/ParagraphView";
 import { CaughtUpCard } from "@/components/CaughtUpCard";
+import { ReaderSheet } from "@/components/ReaderSheet";
+import {
+  ContentsPanel,
+  EndOfChapterActions,
+  ReaderSettingsPanel,
+  ReaderTopBar,
+  type ReaderChapterNavItem,
+  type ReaderVolume,
+} from "@/components/ReaderChrome";
 import type { NovelCardData, NovelStatus } from "@/lib/data/types";
 import {
   getServerSnapshot,
   getSnapshot,
   subscribe,
-  updateReaderSettings,
-  type ReaderFontFamily,
-  type ReaderSettings,
-  type ReaderTheme,
 } from "@/lib/readerSettingsStore";
 
-type Theme = ReaderTheme;
-type FontFamily = ReaderFontFamily;
-
-interface ChapterNavItem {
-  id: string;
-  title: string;
-  order_number: number;
-}
+const WIDTH_CLASS: Record<"narrow" | "comfortable" | "wide", string> = {
+  narrow: "reader-col-narrow",
+  comfortable: "reader-col-comfortable",
+  wide: "reader-col-wide",
+};
 
 export interface ChapterReactionData {
   countsByPid: Record<string, ReactionCountsShape>;
@@ -39,14 +40,17 @@ export interface ChapterReactionData {
 export function ChapterReader({
   novelId,
   novelTitle,
+  authorPenName,
   chapterId,
   chapterTitle,
+  chapterNumber,
   paragraphs,
   authorNoteTop,
   authorNoteBottom,
   prevChapter,
   nextChapter,
   tableOfContents,
+  volumes,
   trackProgress,
   reactions,
   isLoggedIn,
@@ -58,14 +62,17 @@ export function ChapterReader({
 }: {
   novelId: string;
   novelTitle: string;
+  authorPenName: string | null;
   chapterId: string;
   chapterTitle: string;
+  chapterNumber: number;
   paragraphs: Paragraph[];
   authorNoteTop: string | null;
   authorNoteBottom: string | null;
-  prevChapter: ChapterNavItem | null;
-  nextChapter: ChapterNavItem | null;
-  tableOfContents: ChapterNavItem[];
+  prevChapter: ReaderChapterNavItem | null;
+  nextChapter: ReaderChapterNavItem | null;
+  tableOfContents: ReaderChapterNavItem[];
+  volumes: ReaderVolume[];
   trackProgress: boolean;
   reactions: ChapterReactionData;
   isLoggedIn: boolean;
@@ -95,126 +102,51 @@ export function ChapterReader({
     window.scrollTo(0, 0);
   }, [novelId, chapterId, trackProgress, preview]);
 
-  function update<K extends keyof ReaderSettings>(key: K, value: ReaderSettings[K]) {
-    updateReaderSettings({ [key]: value });
-  }
+  const widthClass = WIDTH_CLASS[settings.width] ?? WIDTH_CLASS.comfortable;
+  const chapterPosition = `Chapter ${chapterNumber} of ${tableOfContents.length}`;
+
+  const endActions = (
+    <EndOfChapterActions
+      novelId={novelId}
+      novelTitle={novelTitle}
+      chapterId={chapterId}
+      prevChapter={prevChapter}
+      nextChapter={nextChapter}
+      positionLabel={chapterPosition}
+      chapterCommentCount={chapterCommentCount}
+      compact={isNewestChapter}
+    />
+  );
 
   return (
     <div className={`reader-surface reader-${settings.theme} min-h-screen`}>
-      <div className="mx-auto max-w-2xl px-4 py-6">
-        <div className="mb-4 flex flex-wrap items-center justify-between gap-2 text-sm">
-          <Link href={`/novels/${novelId}`} className="opacity-80 hover:opacity-100">
-            &larr; {novelTitle}
-          </Link>
-          <div className="flex gap-3">
-            <button
-              type="button"
-              onClick={() => setTocOpen((v) => !v)}
-              className="rounded-full border border-current px-3 py-1 opacity-80 hover:opacity-100"
-            >
-              Contents
-            </button>
-            <Link
-              href={`/novels/${novelId}/chapters/${chapterId}/comments`}
-              className="rounded-full border border-current px-3 py-1 opacity-80 hover:opacity-100"
-            >
-              Comments{chapterCommentCount > 0 ? ` (${chapterCommentCount})` : ""}
-            </Link>
-            <button
-              type="button"
-              onClick={() => setSettingsOpen((v) => !v)}
-              className="rounded-full border border-current px-3 py-1 opacity-80 hover:opacity-100"
-            >
-              Aa Settings
-            </button>
-          </div>
-        </div>
+      <ReaderTopBar
+        novelId={novelId}
+        novelTitle={novelTitle}
+        chapterId={chapterId}
+        chapterCommentCount={chapterCommentCount}
+        onOpenContents={() => setTocOpen(true)}
+        onOpenSettings={() => setSettingsOpen(true)}
+      />
 
-        {tocOpen && (
-          <ol className="mb-6 max-h-64 overflow-y-auto rounded-lg border border-current/20 text-sm">
-            {tableOfContents.map((c) => (
-              <li key={c.id} className="border-b border-current/10 last:border-0">
-                <Link
-                  href={`/novels/${novelId}/chapters/${c.id}`}
-                  className={`block px-3 py-2 hover:bg-current/5 ${c.id === chapterId ? "font-semibold" : ""}`}
-                >
-                  {c.order_number}. {c.title}
-                </Link>
-              </li>
-            ))}
-          </ol>
-        )}
-
-        {settingsOpen && (
-          <div className="mb-6 space-y-4 rounded-lg border border-current/20 p-4 text-sm">
-            <div>
-              <span className="mb-1 block font-medium">Theme</span>
-              <div className="flex gap-2">
-                {(["light", "dark", "sepia"] as Theme[]).map((theme) => (
-                  <button
-                    key={theme}
-                    type="button"
-                    onClick={() => update("theme", theme)}
-                    className={`rounded-full border border-current px-3 py-1 capitalize ${
-                      settings.theme === theme ? "bg-current/10" : ""
-                    }`}
-                  >
-                    {theme}
-                  </button>
-                ))}
-              </div>
-            </div>
-
-            <div>
-              <span className="mb-1 block font-medium">Font</span>
-              <div className="flex gap-2">
-                {(["serif", "sans"] as FontFamily[]).map((font) => (
-                  <button
-                    key={font}
-                    type="button"
-                    onClick={() => update("fontFamily", font)}
-                    className={`rounded-full border border-current px-3 py-1 capitalize ${
-                      settings.fontFamily === font ? "bg-current/10" : ""
-                    }`}
-                  >
-                    {font}
-                  </button>
-                ))}
-              </div>
-            </div>
-
-            <label className="block">
-              <span className="mb-1 block font-medium">Font size ({settings.fontSize}px)</span>
-              <input
-                type="range"
-                min={14}
-                max={26}
-                step={1}
-                value={settings.fontSize}
-                onChange={(e) => update("fontSize", Number(e.target.value))}
-                className="w-full"
-              />
-            </label>
-
-            <label className="block">
-              <span className="mb-1 block font-medium">Line height ({settings.lineHeight.toFixed(1)})</span>
-              <input
-                type="range"
-                min={1.3}
-                max={2.4}
-                step={0.1}
-                value={settings.lineHeight}
-                onChange={(e) => update("lineHeight", Number(e.target.value))}
-                className="w-full"
-              />
-            </label>
-          </div>
-        )}
-
-        <h1 className="mb-6 text-xl font-semibold">{chapterTitle}</h1>
+      <article className={`mx-auto ${widthClass} px-5 py-8 sm:px-6 sm:py-12`}>
+        <header className="mb-8 border-b border-current/10 pb-6">
+          <p className="text-xs uppercase tracking-wide opacity-60">
+            {chapterPosition}
+            {authorPenName ? ` · ${authorPenName}` : ""}
+          </p>
+          <h1
+            className={
+              "mt-2 text-2xl font-semibold leading-tight sm:text-3xl " +
+              (settings.fontFamily === "serif" ? "font-serif" : "font-sans")
+            }
+          >
+            {chapterTitle}
+          </h1>
+        </header>
 
         {preview && (
-          <p className="mb-4 rounded-lg border border-dashed border-current/30 px-3 py-2 text-xs opacity-80">
+          <p className="mb-6 rounded-lg border border-dashed border-current/30 px-3 py-2 text-xs opacity-80">
             Preview mode — this is exactly what a reader sees. Nothing is being published, and this
             view doesn&apos;t count as a read.
           </p>
@@ -223,8 +155,15 @@ export function ChapterReader({
         <AuthorNote position="top" text={authorNoteTop} />
 
         <div
-          className={settings.fontFamily === "serif" ? "font-serif" : "font-sans"}
-          style={{ fontSize: `${settings.fontSize}px`, lineHeight: settings.lineHeight }}
+          className={
+            "reader-body " + (settings.fontFamily === "serif" ? "font-serif" : "font-sans")
+          }
+          style={
+            {
+              "--reader-font-size": `${settings.fontSize}px`,
+              "--reader-line-height": String(settings.lineHeight),
+            } as React.CSSProperties
+          }
         >
           {paragraphs.map((p) => (
             <ParagraphReactions
@@ -243,34 +182,37 @@ export function ChapterReader({
 
         <AuthorNote position="bottom" text={authorNoteBottom} />
 
-        <div className="mt-10 flex flex-wrap items-center justify-between gap-3 border-t border-current/20 pt-6 text-sm">
-          {prevChapter ? (
-            <Link href={`/novels/${novelId}/chapters/${prevChapter.id}`} className="hover:underline">
-              &larr; Previous chapter
-            </Link>
-          ) : (
-            <span />
-          )}
-          <Link
-            href={`/novels/${novelId}/chapters/${chapterId}/comments`}
-            className="rounded-full border border-current px-4 py-1.5 font-medium hover:opacity-90"
-          >
-            {chapterCommentCount > 0 ? `${chapterCommentCount} chapter comments` : "Leave a chapter comment"}
-          </Link>
-          {/* Never both a next-chapter button AND a caught-up card. */}
-          {nextChapter ? (
-            <Link href={`/novels/${novelId}/chapters/${nextChapter.id}`} className="hover:underline">
-              Next chapter &rarr;
-            </Link>
-          ) : (
-            <span />
-          )}
-        </div>
-
-        {isNewestChapter && !nextChapter && (
-          <CaughtUpCard novelStatus={novelStatus} suggestions={suggestions} />
+        {isNewestChapter ? (
+          <CaughtUpCard
+            novelStatus={novelStatus}
+            suggestions={suggestions}
+            endActions={endActions}
+          />
+        ) : (
+          endActions
         )}
-      </div>
+      </article>
+
+      <ReaderSheet
+        open={tocOpen}
+        onClose={() => setTocOpen(false)}
+        title="Contents"
+      >
+        <ContentsPanel
+          novelId={novelId}
+          chapters={tableOfContents}
+          volumes={volumes}
+          currentChapterId={chapterId}
+        />
+      </ReaderSheet>
+
+      <ReaderSheet
+        open={settingsOpen}
+        onClose={() => setSettingsOpen(false)}
+        title="Reading settings"
+      >
+        <ReaderSettingsPanel settings={settings} />
+      </ReaderSheet>
     </div>
   );
 }

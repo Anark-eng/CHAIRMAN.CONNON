@@ -68,3 +68,55 @@ a {
   background: var(--reader-bg);
   color: var(--reader-fg);
 }
+
+/* Reading column widths — used by the ChapterReader body. Kept in one
+   place so the settings panel and the layout agree. */
+.reader-col-narrow {
+  max-width: 34rem;
+}
+.reader-col-comfortable {
+  max-width: 42rem;
+}
+.reader-col-wide {
+  max-width: 52rem;
+}
+
+/* Reduced motion: don't animate the sheet slide, the button pulses,
+   or the "saving…" indicators. Instant state changes only. */
+@media (prefers-reduced-motion: reduce) {
+  * {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+/* Touch-friendly minimum target sizes for anything that carries a
+   .reader-hit class — used on the reader's chrome buttons. */
+.reader-hit {
+  min-height: 44px;
+  min-width: 44px;
+}
+
+/* Chapter reader body typography knobs — the reader sets --reader-font-size
+   and --reader-line-height inline on this wrapper via the settings store,
+   and this class applies them + a sensible paragraph rhythm. */
+.reader-body {
+  font-size: var(--reader-font-size, 18px);
+  line-height: var(--reader-line-height, 1.75);
+}
+.reader-body p {
+  margin-bottom: 1.1em;
+}
+.reader-body h3 {
+  margin-top: 2em;
+  margin-bottom: 0.6em;
+  font-size: 1.15em;
+  font-weight: 600;
+  letter-spacing: -0.005em;
+}
+.reader-body blockquote {
+  margin-top: 1.2em;
+  margin-bottom: 1.2em;
+}

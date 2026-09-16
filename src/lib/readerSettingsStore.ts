@@ -8,12 +8,18 @@
 
 export type ReaderTheme = "light" | "dark" | "sepia";
 export type ReaderFontFamily = "serif" | "sans";
+// Reading column widths. Kept named so the labels + max-widths live in
+// one place (see components/ReaderChrome). "comfortable" is roughly 68
+// characters wide at the default font size, which is the sweet spot
+// for uninterrupted long-form prose.
+export type ReaderWidth = "narrow" | "comfortable" | "wide";
 
 export interface ReaderSettings {
   theme: ReaderTheme;
   fontSize: number;
   lineHeight: number;
   fontFamily: ReaderFontFamily;
+  width: ReaderWidth;
 }
 
 export const DEFAULT_READER_SETTINGS: ReaderSettings = {
@@ -21,6 +27,7 @@ export const DEFAULT_READER_SETTINGS: ReaderSettings = {
   fontSize: 18,
   lineHeight: 1.8,
   fontFamily: "serif",
+  width: "comfortable",
 };
 
 const STORAGE_KEY = "noveltrend-reader-settings";

@@ -1,11 +1,13 @@
 import { notFound } from "next/navigation";
 import { ChapterReader, type ChapterReactionData } from "@/components/ChapterReader";
+import type { ReaderChapterNavItem, ReaderVolume } from "@/components/ReaderChrome";
 import { getChapterCommentCount, getParagraphCommentCounts } from "@/lib/data/comments";
 import { getCurrentUserAndProfile } from "@/lib/data/profile";
 import { getChapter, getChaptersForNovel, getNovelById } from "@/lib/data/novels";
 import { getMyReactionsForChapter, getReactionCountsForChapter } from "@/lib/data/reactions";
 import { getSuggestionsForNovel } from "@/lib/data/suggestions";
 import { assignPids, parseMarkdownParagraphs, type Paragraph } from "@/lib/chapterContent";
+import { createClient } from "@/lib/supabase/server";
 import type { ReactionCountsShape } from "@/lib/reactions";
 import type { ReactionType } from "@/lib/supabase/database.types";
 
@@ -38,18 +40,46 @@ export default async function ChapterPage({
     ? storedParagraphs
     : assignPids(parseMarkdownParagraphs(chapter.body ?? ""), []);
 
-  const [chapters, countRows, myReactions, paragraphCommentCounts, chapterCommentCount] = await Promise.all([
+  const supabase = await createClient();
+  const [
+    chapters,
+    countRows,
+    myReactions,
+    paragraphCommentCounts,
+    chapterCommentCount,
+    volumeQuery,
+  ] = await Promise.all([
     getChaptersForNovel(novelId, { includeDrafts: false }),
     getReactionCountsForChapter(chapter.id),
     user ? getMyReactionsForChapter(user.id, chapter.id) : Promise.resolve([]),
     getParagraphCommentCounts(chapter.id, paragraphs.map((p) => p.pid)),
     getChapterCommentCount(chapter.id),
+    supabase
+      .from("volumes")
+      .select("id, name, position")
+      .eq("novel_id", novelId)
+      .order("position", { ascending: true }),
   ]);
+
+  const volumes: ReaderVolume[] = (volumeQuery.data ?? []).map((v) => ({
+    id: v.id,
+    name: v.name,
+    position: v.position,
+  }));
 
   const orderedChapters = chapter.is_published
     ? chapters
-    : [...chapters, { id: chapter.id, title: chapter.title, order_number: chapter.order_number, is_published: false, published_at: null }]
-        .sort((a, b) => a.order_number - b.order_number);
+    : [
+        ...chapters,
+        {
+          id: chapter.id,
+          title: chapter.title,
+          order_number: chapter.order_number,
+          is_published: false,
+          published_at: null,
+          volume_id: chapter.volume_id,
+        },
+      ].sort((a, b) => a.order_number - b.order_number);
 
   const currentIndex = orderedChapters.findIndex((c) => c.id === chapter.id);
   const prevChapter = currentIndex > 0 ? orderedChapters[currentIndex - 1] : null;
@@ -94,18 +124,28 @@ export default async function ChapterPage({
     paragraphCommentCountsByPid: commentCountsByPid,
   };
 
+  const toReaderNav = (c: { id: string; title: string; order_number: number; volume_id?: string | null }): ReaderChapterNavItem => ({
+    id: c.id,
+    title: c.title,
+    order_number: c.order_number,
+    volume_id: c.volume_id ?? null,
+  });
+
   return (
     <ChapterReader
       novelId={novelId}
       novelTitle={novel.title}
+      authorPenName={novel.authorPenName}
       chapterId={chapter.id}
       chapterTitle={chapter.title}
+      chapterNumber={chapter.order_number}
       paragraphs={paragraphs}
       authorNoteTop={chapter.author_note_top}
       authorNoteBottom={chapter.author_note_bottom}
-      prevChapter={prevChapter}
-      nextChapter={nextChapter}
-      tableOfContents={chapters}
+      prevChapter={prevChapter ? toReaderNav(prevChapter) : null}
+      nextChapter={nextChapter ? toReaderNav(nextChapter) : null}
+      tableOfContents={chapters.map(toReaderNav)}
+      volumes={volumes}
       trackProgress={Boolean(user) && chapter.is_published && !isOwner && !previewMode}
       reactions={reactionData}
       isLoggedIn={Boolean(user)}
