@@ -1,6 +1,7 @@
 import { createClient } from "@/lib/supabase/server";
 import type { NovelCardData } from "./types";
 import type { BoardKey } from "@/lib/rankings";
+import { CARD_SELECT, toCard, type NovelRow } from "./novels";
 import { getRatingSummariesFor, type NovelRatingSummary } from "./ratings";
 
 export interface BoardEntry {
@@ -13,31 +14,6 @@ export interface BoardEntry {
     // Trending doesn't render this; its own score isn't a number readers care about.
     label: string;
   } | null;
-}
-
-const CARD_SELECT = "id, title, cover_url, status, synopsis, author_id, created_at, genres(id,name,slug), profiles(pen_name)";
-
-type NovelRow = {
-  id: string;
-  title: string;
-  cover_url: string | null;
-  status: "ongoing" | "completed" | "hiatus";
-  synopsis: string;
-  author_id: string;
-  created_at: string;
-  genres: { id: string; name: string; slug: string } | null;
-  profiles: { pen_name: string | null } | null;
-};
-
-function toCard(row: NovelRow): NovelCardData {
-  return {
-    id: row.id,
-    title: row.title,
-    cover_url: row.cover_url,
-    status: row.status,
-    authorPenName: row.profiles?.pen_name ?? null,
-    genre: row.genres,
-  };
 }
 
 // The total number of novels that would qualify for a board if the

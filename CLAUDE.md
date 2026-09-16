@@ -78,6 +78,11 @@ src/
     reactions.ts                Reaction labels, emoji, thresholds
     rankings.ts                 Shared thresholds (RATING_MIN_COUNT,
                                  BOARD_MIN_QUALIFIERS) + board labels
+    classification.ts           Shared classification constants
+                                 (MAX_GENRES_PER_NOVEL,
+                                 TAG_APPROVAL_MIN_NOVELS,
+                                 MAX_TAG_NAME_LENGTH, DEMOGRAPHICS list,
+                                 normaliseTagName mirror of the SQL)
     siteUrl.ts                  Origin used for auth-email redirect links
     guestKey.ts                 HMAC-signed random-id cookie for logged-out readers
 supabase/
@@ -97,6 +102,27 @@ supabase/
                                        excludes the novel's own author from every
                                        signal.
                                      - get_author_novel_stats() SECURITY DEFINER.
+    0007_classification.sql          Novel classification rebuild:
+                                     - novels.demographic (fixed 5 values).
+                                     - novel_genres many-to-many, cap 9 via
+                                       trigger; drops novels.genre_id after
+                                       migrating each existing value into
+                                       novel_genres.
+                                     - Widened genre list.
+                                     - tags.is_approved + normalised-name
+                                       unique index.
+                                     - create_or_get_tag() SECURITY DEFINER
+                                       function: trims, refuses empty/punct-
+                                       only, shadow-checks against genres and
+                                       demographics, resolves near-duplicates
+                                       to the existing tag by normalised
+                                       match, new tags start unapproved.
+                                     - Trigger auto-approves a tag once it's
+                                       on TAG_APPROVAL_MIN_NOVELS distinct
+                                       novels.
+                                     - Widened starter tag pool (subject,
+                                       story shape, cast, setting, tone,
+                                       content warnings) — all pre-approved.
     0006_ratings_and_boards.sql      Ratings + three-board system:
                                      - novel_ratings (0.5–10 half-steps, RLS +
                                        trigger blocks author-rates-own-novel).
@@ -177,6 +203,29 @@ supabase/
   `RATING_MIN_COUNT` (5) and `BOARD_MIN_QUALIFIERS` (10) and mirrors the
   numbers used in migration 0006's SQL. If you change one, change the
   other.
+- **Classification thresholds live in one place too.** `src/lib/classification.ts`
+  holds `MAX_GENRES_PER_NOVEL` (9), `TAG_APPROVAL_MIN_NOVELS` (3),
+  `MAX_TAG_NAME_LENGTH` (40), the fixed `DEMOGRAPHICS` list, and the
+  same normalisation as the DB's `normalise_tag_name()`. All mirrored
+  in migration 0007. Change both.
+- **Genres are many per novel, demographics are one.** A novel carries
+  up to 9 genres through `novel_genres`. `novels.demographic` is a
+  single text column with a check constraint on the fixed 5 values.
+  Choosing a genre in Browse must find every novel carrying it (join
+  through `novel_genres`, not a single-column equality). Authors can't
+  extend the demographic list; a database CHECK constraint enforces this.
+- **Tags are open, but discovery is gated.** Authors can create tags
+  from the novel form through the `create_or_get_tag()` SECURITY DEFINER
+  function. That function does the trim/length/non-empty checks, resolves
+  near-duplicates via normalised name (case, spacing, punctuation
+  ignored) to an existing tag, and refuses names that shadow a genre or
+  demographic. A NEW tag starts `is_approved = false` — it works on the
+  novel and shows on its page immediately, but it does NOT appear in
+  Browse's filter list or the blocked-tags picker until at least
+  `TAG_APPROVAL_MIN_NOVELS` distinct novels use it (auto-promoted by a
+  trigger) or the site owner sets `is_approved = true` by hand. This
+  matters because readers block tags to avoid content they don't want;
+  a flood of synonyms would leak unwanted content past a reader's block.
 - **The rating control never goes inside the chapter reader.** Rating
   belongs on the novel page (and card, past the minimum). The reader is
   for reading; nothing extra goes there.

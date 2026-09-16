@@ -3,6 +3,8 @@
 
 export type NovelStatus = "ongoing" | "completed" | "hiatus";
 
+export type Demographic = "shounen" | "shoujo" | "seinen" | "josei" | "general";
+
 export type ReactionType =
   | "shocked"
   | "heartbreak"
@@ -49,9 +51,9 @@ export interface Database {
         Relationships: [];
       };
       tags: {
-        Row: { id: string; name: string; slug: string };
-        Insert: { id?: string; name: string; slug: string };
-        Update: { name?: string; slug?: string };
+        Row: { id: string; name: string; slug: string; is_approved: boolean };
+        Insert: { id?: string; name: string; slug: string; is_approved?: boolean };
+        Update: { name?: string; slug?: string; is_approved?: boolean };
         Relationships: [];
       };
       novels: {
@@ -61,7 +63,7 @@ export interface Database {
           title: string;
           synopsis: string;
           cover_url: string | null;
-          genre_id: string | null;
+          demographic: Demographic | null;
           status: NovelStatus;
           created_at: string;
           updated_at: string;
@@ -72,16 +74,22 @@ export interface Database {
           title: string;
           synopsis?: string;
           cover_url?: string | null;
-          genre_id?: string | null;
+          demographic?: Demographic | null;
           status?: NovelStatus;
         };
         Update: {
           title?: string;
           synopsis?: string;
           cover_url?: string | null;
-          genre_id?: string | null;
+          demographic?: Demographic | null;
           status?: NovelStatus;
         };
+        Relationships: [];
+      };
+      novel_genres: {
+        Row: { novel_id: string; genre_id: string; created_at: string };
+        Insert: { novel_id: string; genre_id: string };
+        Update: Record<string, never>;
         Relationships: [];
       };
       novel_tags: {
@@ -370,6 +378,16 @@ export interface Database {
           rating_count: number;
           avg_score: number;
           score_histogram: number[];
+        }[];
+      };
+      create_or_get_tag: {
+        Args: { p_name: string };
+        Returns: {
+          id: string;
+          name: string;
+          slug: string;
+          is_approved: boolean;
+          was_created: boolean;
         }[];
       };
     };

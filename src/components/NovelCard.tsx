@@ -2,6 +2,7 @@ import Link from "next/link";
 import { CoverThumb } from "./CoverThumb";
 import { RatingSummaryTag } from "./RatingSummary";
 import { StatusBadge } from "./StatusBadge";
+import { demographicLabel } from "@/lib/classification";
 import type { NovelCardData } from "@/lib/data/types";
 
 export interface NovelCardExtras {
@@ -25,10 +26,21 @@ export function NovelCard({
         <p className="text-sm text-[var(--muted)]">
           {novel.authorPenName ?? "Unknown author"}
         </p>
-        <div className="mt-1 flex flex-wrap items-center gap-2">
+        <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1">
           <StatusBadge status={novel.status} />
-          {novel.genre && (
-            <span className="text-xs text-[var(--muted)]">{novel.genre.name}</span>
+          {novel.demographic && (
+            <span className="rounded-full bg-[var(--border)] px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-[var(--muted)]">
+              {demographicLabel(novel.demographic)}
+            </span>
+          )}
+          {novel.genres.length > 0 && (
+            <span className="text-xs text-[var(--muted)]">
+              {novel.genres
+                .slice(0, 3)
+                .map((g) => g.name)
+                .join(", ")}
+              {novel.genres.length > 3 && ` +${novel.genres.length - 3}`}
+            </span>
           )}
           {extras?.rating && (
             <RatingSummaryTag
