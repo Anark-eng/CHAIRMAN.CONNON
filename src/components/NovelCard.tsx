@@ -1,9 +1,20 @@
 import Link from "next/link";
 import { CoverThumb } from "./CoverThumb";
+import { RatingSummaryTag } from "./RatingSummary";
 import { StatusBadge } from "./StatusBadge";
 import type { NovelCardData } from "@/lib/data/types";
 
-export function NovelCard({ novel }: { novel: NovelCardData }) {
+export interface NovelCardExtras {
+  rating?: { ratingCount: number; avgScore: number };
+}
+
+export function NovelCard({
+  novel,
+  extras,
+}: {
+  novel: NovelCardData;
+  extras?: NovelCardExtras;
+}) {
   return (
     <Link href={`/novels/${novel.id}`} className="group flex flex-col gap-2">
       <CoverThumb src={novel.cover_url} title={novel.title} />
@@ -18,6 +29,12 @@ export function NovelCard({ novel }: { novel: NovelCardData }) {
           <StatusBadge status={novel.status} />
           {novel.genre && (
             <span className="text-xs text-[var(--muted)]">{novel.genre.name}</span>
+          )}
+          {extras?.rating && (
+            <RatingSummaryTag
+              ratingCount={extras.rating.ratingCount}
+              avgScore={extras.rating.avgScore}
+            />
           )}
         </div>
       </div>

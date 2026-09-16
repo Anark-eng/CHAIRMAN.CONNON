@@ -283,6 +283,73 @@ export interface Database {
         Update: Record<string, never>;
         Relationships: [];
       };
+      novel_ratings: {
+        Row: {
+          id: string;
+          user_id: string;
+          novel_id: string;
+          score: number;
+          created_at: string;
+          updated_at: string;
+        };
+        Insert: {
+          id?: string;
+          user_id: string;
+          novel_id: string;
+          score: number;
+        };
+        Update: {
+          score?: number;
+        };
+        Relationships: [];
+      };
+      novel_rating_stats: {
+        Row: {
+          novel_id: string;
+          rating_count: number;
+          rating_sum: number;
+          avg_score: number;
+          updated_at: string;
+        };
+        Insert: {
+          novel_id: string;
+          rating_count?: number;
+          rating_sum?: number;
+          avg_score?: number;
+        };
+        Update: Record<string, never>;
+        Relationships: [];
+      };
+      top_rated_scores: {
+        Row: {
+          novel_id: string;
+          rank_score: number;
+          avg_score: number;
+          rating_count: number;
+          computed_at: string;
+        };
+        Insert: {
+          novel_id: string;
+          rank_score: number;
+          avg_score: number;
+          rating_count: number;
+        };
+        Update: Record<string, never>;
+        Relationships: [];
+      };
+      most_read_scores: {
+        Row: {
+          novel_id: string;
+          distinct_readers: number;
+          computed_at: string;
+        };
+        Insert: {
+          novel_id: string;
+          distinct_readers: number;
+        };
+        Update: Record<string, never>;
+        Relationships: [];
+      };
     };
     Views: Record<string, never>;
     Functions: {
@@ -298,6 +365,11 @@ export interface Database {
           reactions_7d: number;
           comments_7d: number;
           trending_rank: number | null;
+          top_rated_rank: number | null;
+          most_read_rank: number | null;
+          rating_count: number;
+          avg_score: number;
+          score_histogram: number[];
         }[];
       };
     };

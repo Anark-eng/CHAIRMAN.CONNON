@@ -14,6 +14,7 @@ export async function NavBar() {
 
         <nav className="flex flex-wrap items-center gap-4 text-sm">
           <Link href="/browse">Browse</Link>
+          <Link href="/rankings">Rankings</Link>
           {user && <Link href="/updates">Updates</Link>}
           {user && <Link href="/library">Library</Link>}
           {profile?.is_author && <Link href="/my-novels">My Novels</Link>}

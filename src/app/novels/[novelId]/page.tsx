@@ -1,15 +1,20 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { CoverThumb } from "@/components/CoverThumb";
-import { StatusBadge } from "@/components/StatusBadge";
 import { AuthorStatsPanel } from "@/components/AuthorStatsPanel";
+import { BoardPositionRow } from "@/components/BoardPositionRow";
+import { CoverThumb } from "@/components/CoverThumb";
+import { RatingControl } from "@/components/RatingControl";
+import { StatusBadge } from "@/components/StatusBadge";
 import { addToLibrary, removeFromLibrary } from "@/lib/actions/library";
 import { getAuthorNovelStats } from "@/lib/data/authorStats";
 import { getBlockedTagIds } from "@/lib/data/blockedTags";
+import { getBoardPositionsForNovel, getBoardQualifierCount } from "@/lib/data/boards";
 import { getCurrentUserAndProfile } from "@/lib/data/profile";
 import { getChaptersForNovel, getNovelById } from "@/lib/data/novels";
 import { isInLibrary } from "@/lib/data/library";
 import { getLastReadChapterId } from "@/lib/data/progress";
+import { getMyRatingFor, getRatingSummary } from "@/lib/data/ratings";
+import { BOARD_MIN_QUALIFIERS, type BoardKey } from "@/lib/rankings";
 
 export default async function NovelPage({
   params,
@@ -24,13 +29,37 @@ export default async function NovelPage({
 
   const isOwner = user?.id === novel.author_id;
 
-  const [chapters, inLibrary, lastReadChapterId, blockedTagIds, authorStats] = await Promise.all([
+  const [
+    chapters,
+    inLibrary,
+    lastReadChapterId,
+    blockedTagIds,
+    authorStats,
+    ratingSummary,
+    myRating,
+    positions,
+    boardCounts,
+  ] = await Promise.all([
     getChaptersForNovel(novelId, { includeDrafts: isOwner }),
     user ? isInLibrary(user.id, novelId) : Promise.resolve(false),
     user ? getLastReadChapterId(user.id, novelId) : Promise.resolve(null),
     getBlockedTagIds(user?.id ?? null),
     isOwner ? getAuthorNovelStats(novelId) : Promise.resolve(null),
+    getRatingSummary(novelId),
+    getMyRatingFor(user?.id ?? null, novelId),
+    getBoardPositionsForNovel(novelId),
+    Promise.all([
+      getBoardQualifierCount("trending"),
+      getBoardQualifierCount("top_rated"),
+      getBoardQualifierCount("most_read"),
+    ]).then(([trending, top_rated, most_read]) => ({ trending, top_rated, most_read })),
   ]);
+
+  // A per-board position badge is only shown when THAT board is live
+  // under the 10-qualifier rule.
+  const visiblePositions = (["trending", "top_rated", "most_read"] as BoardKey[])
+    .filter((b) => boardCounts[b] >= BOARD_MIN_QUALIFIERS && positions[b] !== null)
+    .map((b) => ({ board: b, rank: positions[b] as number }));
 
   // Direct links to a blocked-tag novel still work — we just show a
   // quiet notice at the top so the reader knows why it isn't turning up
@@ -76,7 +105,19 @@ export default async function NovelPage({
             </div>
           )}
 
+          <BoardPositionRow positions={visiblePositions} />
+
           <p className="mt-4 whitespace-pre-line text-sm leading-relaxed">{novel.synopsis}</p>
+
+          <div className="mt-5">
+            <RatingControl
+              novelId={novelId}
+              isLoggedIn={Boolean(user)}
+              isOwnNovel={isOwner}
+              initialMyRating={myRating}
+              initialSummary={{ ratingCount: ratingSummary.ratingCount, avgScore: ratingSummary.avgScore }}
+            />
+          </div>
 
           <div className="mt-5 flex flex-wrap items-center gap-3">
             {continueChapter ? (

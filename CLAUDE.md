@@ -9,8 +9,8 @@ novels, read them, and keep them in a library.
   custom server or background workers.
 - Supabase for the Postgres database, email-and-password auth, and image
   storage (the `covers` bucket). Accessed through `@supabase/ssr`.
-- Trending refresh runs inside the database itself via **pg_cron**, so no
-  external scheduler is needed.
+- All ranking refresh (Trending, Top rated, Most read) runs inside the
+  database itself via **pg_cron**, so no external scheduler is needed.
 - Env vars:
   - `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY` — Supabase.
     The app shows a plain setup message instead of crashing when these
@@ -28,6 +28,7 @@ src/
   app/                          routes (App Router)
     page.tsx                    Home (Trending, Recently updated, Newly added)
     browse/                     Browse (search, genre + tag filters, sort)
+    rankings/                   Trending, Top rated, Most read (three boards)
     updates/                    Novels in library with unread chapters
     login/, signup/             Auth
     forgot-password/            Forgot-password form
@@ -39,7 +40,8 @@ src/
     library/                    A reader's saved novels
     novels/
       new/                      Create a novel
-      [novelId]/                Novel page (shows blocked-tag notice if applicable)
+      [novelId]/                Novel page (rating + board positions + optional
+                                 blocked-tag notice + author stats)
         edit/                   Edit novel details
         chapters/
           new/                  Add a chapter
@@ -54,6 +56,10 @@ src/
     CommentForm.tsx             Shared form used for para and chapter comments
     BlockedTagsSection.tsx      Profile page tag-block toggles
     CaughtUpCard.tsx            End-of-novel card with 3 suggestions
+    RatingControl.tsx           Half-step select + optimistic reconcile
+    RatingSummary.tsx           "8.7 / 10 · 42 ratings", or the under-5 message
+    BoardPositionRow.tsx        "#4 trending" / "#12 top rated" badges
+    AuthorStatsPanel.tsx        Author-only stats incl. rating spread + ranks
   lib/
     supabase/                   Supabase client setup (browser, server, middleware)
                                  + database.types.ts (hand-written, matches the SQL)
@@ -63,13 +69,17 @@ src/
       blockedTags.ts             Blocklist load + excluded-novel-ids helper
       suggestions.ts             Post-chapter next-read picker
       library.ts                 Library + Updates queries
+      ratings.ts                 Novel rating summaries + a reader's own rating
+      boards.ts                  Three-board reads + per-novel positions
     actions/                    Server Actions (writes: auth, novels, chapters,
                                 library, reading progress, profile, reactions,
-                                comments, reads, blockedTags)
+                                comments, reads, blockedTags, ratings)
     reading.ts                  Splits chapter text into indexed paragraphs
     reactions.ts                Reaction labels, emoji, thresholds
+    rankings.ts                 Shared thresholds (RATING_MIN_COUNT,
+                                 BOARD_MIN_QUALIFIERS) + board labels
     siteUrl.ts                  Origin used for auth-email redirect links
-    guestKey.ts                 Random-id cookie for logged-out readers
+    guestKey.ts                 HMAC-signed random-id cookie for logged-out readers
 supabase/
   migrations/
     0001_init.sql                    Full initial schema + RLS + storage policies
@@ -81,15 +91,29 @@ supabase/
     0005_anti_gaming.sql             Anti-gaming pass:
                                      - record_chapter_read() SECURITY DEFINER
                                        function; direct INSERT on chapter_reads
-                                       is revoked from anon/authenticated so
-                                       the function is the only writer.
-                                     - refresh_trending_scores() rewritten to
-                                       weight guest reads (0.4) and cap their
-                                       share, and to exclude the novel's own
-                                       author from every signal (not just reads).
-                                     - get_author_novel_stats() SECURITY DEFINER
-                                       function for the author-only stats panel
-                                       (library counts are otherwise RLS-locked).
+                                       is revoked from anon/authenticated.
+                                     - refresh_trending_scores() weights guest
+                                       reads (0.4) and caps their share, and
+                                       excludes the novel's own author from every
+                                       signal.
+                                     - get_author_novel_stats() SECURITY DEFINER.
+    0006_ratings_and_boards.sql      Ratings + three-board system:
+                                     - novel_ratings (0.5–10 half-steps, RLS +
+                                       trigger blocks author-rates-own-novel).
+                                     - novel_rating_stats (trigger-maintained
+                                       running average + count).
+                                     - top_rated_scores (Bayesian shrinkage
+                                       toward site-wide weighted average).
+                                     - most_read_scores (lifetime distinct
+                                       readers, author excluded).
+                                     - refresh_trending_scores() v3: adds a
+                                       "rated" signal (weight = comment weight).
+                                       Rating SCORE never enters trending.
+                                     - refresh_all_boards() runs all three;
+                                       pg_cron rescheduled to call it hourly.
+                                     - get_author_novel_stats() v2: adds rating
+                                       stats + score histogram + all three
+                                       board ranks.
   seed.sql                       Starter genres and tags
 ```
 
@@ -115,32 +139,53 @@ supabase/
 - **Reaction counts are running totals.** Reader queries hit
   `paragraph_reaction_counts`, never `paragraph_reactions` in aggregate.
   A trigger keeps the counts row in step with the reactions row.
-- **Trending is not computed on page load.** Pages read from
-  `trending_scores`, refreshed hourly by `refresh_trending_scores()` via
-  pg_cron. The scoring rule (weights, activity floor, growth formula,
-  guest weighting + cap, and author-exclusion) lives as a plain-English
-  comment at the top of migration 0005 — that comment supersedes 0004's
-  earlier version. Tune numbers there without having to reread the SQL.
-- **The author must not inflate their own trending.** Every signal in
+- **The three boards are independent, always.** Trending answers what
+  is catching on, Top rated answers what is good, Most read answers what
+  is big. A novel's position on one board must never affect its position
+  on another. That's why a rating's SCORE (the number a reader gave) is
+  never used as a trending signal — only the act of rating is. If you
+  find yourself wanting to combine board signals for a tiebreak, stop:
+  independence is the whole point.
+- **No lifetime view counter, ever.** A page-load counter was considered
+  and deliberately rejected — refreshing a page would inflate it.
+  Reads live in `chapter_reads`, deduped by `record_chapter_read()` at
+  one row per (reader, chapter, day), and Most read reads from that.
+  Anything that looks like "views += 1 on GET" is wrong.
+- **Ranking is not computed on page load.** Pages read from
+  `trending_scores`, `top_rated_scores`, `most_read_scores`. All three
+  are refreshed hourly by `refresh_all_boards()` via pg_cron. The
+  scoring rules (trending weights + growth + guest cap; top rated
+  shrinkage; most read distinct-reader dedup) live as plain-English
+  comments at the top of the migrations that own them (0004 → 0005 →
+  0006) — tune numbers there without having to reread the SQL.
+- **The author must not inflate their own boards.** Every signal in
   `refresh_trending_scores()` excludes rows produced by the novel's own
-  author. Reactions/comments/library adds by the author still work and
-  still show — they just don't move the number. The author sees their
-  own novel's raw activity in an "Only you can see this" panel on the
-  novel page, with a note explaining the trending exclusion so it
-  doesn't read as a bug.
+  author. `refresh_most_read_scores()` excludes them too. And an author
+  is blocked from rating their own novel by both an RLS policy and a
+  DB trigger, so they can't influence Top rated either. Their reactions
+  and comments still work and still show — they just don't move the
+  scores. Author sees their own novel's raw activity + all three ranks
+  in an "Only you can see this" panel on the novel page.
 - **Guest reads are weighted lower AND capped.** A guest read is worth
-  0.4 of a signed-in read; the total guest contribution per novel is
-  capped at `2 + 1.5 × signed_reads`, so a novel with no signed-in
-  readers can't trend on guest reads alone. The `nt_guest` cookie is
-  HMAC-signed with `NOVELTREND_GUEST_SECRET`, so it can't be hand-edited
-  to forge a new identity per request; clearing cookies mints a new id,
-  but the cap keeps that from mattering.
+  0.4 of a signed-in read in trending; the total guest contribution per
+  novel is capped at `2 + 1.5 × signed_reads`. Most read still counts
+  guests as distinct readers (each once), so a genuinely popular novel
+  that draws only guests still ranks on Most read — it just can't
+  trend on guest reads alone. The `nt_guest` cookie is HMAC-signed with
+  `NOVELTREND_GUEST_SECRET`.
+- **Rating thresholds live in one place.** `src/lib/rankings.ts` holds
+  `RATING_MIN_COUNT` (5) and `BOARD_MIN_QUALIFIERS` (10) and mirrors the
+  numbers used in migration 0006's SQL. If you change one, change the
+  other.
+- **The rating control never goes inside the chapter reader.** Rating
+  belongs on the novel page (and card, past the minimum). The reader is
+  for reading; nothing extra goes there.
 - **Blocked tags filter in the query, on every list.** Home, Trending,
-  Browse, search results, and post-chapter suggestions all take a
-  `Set<string>` of blocked novel ids built via `loadBlocklist()` and
-  subtract before hydrating cards. Never hide with CSS afterwards. A
-  direct link to a blocked novel's page still works, with a quiet notice
-  at the top.
+  Browse, search results, Rankings boards, and post-chapter suggestions
+  all take a `Set<string>` of blocked novel ids built via
+  `loadBlocklist()` and subtract before hydrating cards. Never hide with
+  CSS afterwards. A direct link to a blocked novel's page still works,
+  with a quiet notice at the top.
 - **Reads are recorded by the database, fire-and-forget from the
   browser.** The chapter reader calls `recordChapterRead()` in an effect
   but never waits for its result. The action is a thin RPC wrapper
@@ -151,12 +196,12 @@ supabase/
   authenticated, so the function is the only way in.
 - **The reader is the most-used screen.** Nothing there should shift,
   flicker, or need a second tap to work. Under-paragraph counts sit in a
-  fixed-height slot so the paragraph body never moves when they appear or
-  the reaction bar opens.
+  fixed-height slot so the paragraph body never moves when they appear
+  or the reaction bar opens. Rating controls have optimistic apply +
+  rollback so a phone tap feels instant.
 - **Migrations are safe to run twice.** They use `create if not exists`,
   `drop policy if exists`, `create or replace function`, and unschedule
-  existing pg_cron jobs before rescheduling, so the owner can rerun them
-  without breaking a working database.
+  existing pg_cron jobs before rescheduling.
 - **Reading progress is the single source of truth for "unread".** Both
   the Library "new" badge and the Updates page derive unread state from
   the reader's last-read chapter order — don't invent a second store.
