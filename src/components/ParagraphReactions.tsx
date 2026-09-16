@@ -11,34 +11,31 @@ import {
   type ReactionCountsShape,
 } from "@/lib/reactions";
 import { toggleParagraphReaction } from "@/lib/actions/reactions";
+import type { Paragraph } from "@/lib/chapterContent";
+import { ParagraphRuns } from "./ParagraphView";
 
 interface ParagraphReactionsProps {
   novelId: string;
   chapterId: string;
-  paragraphIndex: number;
-  paragraphText: string;
+  paragraph: Paragraph;
   initialCounts: ReactionCountsShape;
   initialMyReactions: ReactionType[];
   initialCommentCount: number;
   isLoggedIn: boolean;
+  interactive: boolean; // false in preview mode: no bar, no counts, no comment link
 }
 
-// One reactive paragraph. Tapping the paragraph body opens a small
-// reaction bar; tapping the paragraph again closes it. Tapping a reaction
-// toggles it (server action → refreshed counts). A comment button links
-// through to the paragraph's discussion page.
-//
-// Everything under the paragraph text sits in a fixed-height slot so the
-// paragraph itself never shifts when a count appears or the bar opens.
+// One reactive paragraph. Keys on the paragraph's stable pid so
+// reactions and comments follow the paragraph across editor rewrites.
 export function ParagraphReactions({
   novelId,
   chapterId,
-  paragraphIndex,
-  paragraphText,
+  paragraph,
   initialCounts,
   initialMyReactions,
   initialCommentCount,
   isLoggedIn,
+  interactive,
 }: ParagraphReactionsProps) {
   const [counts, setCounts] = useState<ReactionCountsShape>(initialCounts ?? EMPTY_COUNTS);
   const [myReactions, setMyReactions] = useState<Set<ReactionType>>(new Set(initialMyReactions));
@@ -48,7 +45,6 @@ export function ParagraphReactions({
   const [, startTransition] = useTransition();
 
   const topReactions = useMemo(() => {
-    // Show up to three most-used reactions inline under the paragraph.
     const entries: Array<[ReactionType, number]> = [
       ["shocked", counts.shocked],
       ["heartbreak", counts.heartbreak],
@@ -57,13 +53,11 @@ export function ParagraphReactions({
       ["best_line", counts.best_line],
       ["confused", counts.confused],
     ];
-    return entries
-      .filter(([, count]) => count > 0)
-      .sort((a, b) => b[1] - a[1])
-      .slice(0, 3);
+    return entries.filter(([, c]) => c > 0).sort((a, b) => b[1] - a[1]).slice(0, 3);
   }, [counts]);
 
-  const showAccentBar = counts.total >= ACCENT_BAR_THRESHOLD;
+  const showAccentBar = interactive && counts.total >= ACCENT_BAR_THRESHOLD;
+  const paragraphPid = paragraph.pid;
 
   const handleToggle = useCallback(
     (type: ReactionType) => {
@@ -71,8 +65,6 @@ export function ParagraphReactions({
         setNeedsLogin(true);
         return;
       }
-      // Optimistic update so a phone tap feels instant. The server
-      // action returns the fresh counts and we reconcile on top.
       const currentlyActive = myReactions.has(type);
       const optimisticCounts = { ...counts };
       const delta = currentlyActive ? -1 : 1;
@@ -87,21 +79,18 @@ export function ParagraphReactions({
       setPendingType(type);
 
       startTransition(async () => {
-        const result = await toggleParagraphReaction(novelId, chapterId, paragraphIndex, type);
+        const result = await toggleParagraphReaction(novelId, chapterId, paragraphPid, type);
         setPendingType(null);
         if (!result.ok) {
-          // Roll back the optimistic change.
           setCounts(counts);
           setMyReactions(myReactions);
           if (result.needsLogin) setNeedsLogin(true);
           return;
         }
-        if (result.counts) {
-          setCounts({ ...result.counts });
-        }
+        if (result.counts) setCounts({ ...result.counts });
       });
     },
-    [chapterId, counts, isLoggedIn, myReactions, novelId, paragraphIndex],
+    [chapterId, counts, isLoggedIn, myReactions, novelId, paragraphPid],
   );
 
   return (
@@ -112,42 +101,36 @@ export function ParagraphReactions({
     >
       <button
         type="button"
-        onClick={() => setBarOpen((v) => !v)}
+        onClick={() => interactive && setBarOpen((v) => !v)}
         aria-expanded={barOpen}
-        aria-label={`Paragraph ${paragraphIndex + 1}. Tap to react or comment.`}
+        aria-label="Tap to react or comment on this paragraph."
         className="block w-full cursor-pointer select-text text-left"
-        // Prevent iOS long-press callout; still supports text selection.
         style={{ WebkitTouchCallout: "none" }}
+        disabled={!interactive}
       >
-        <p data-paragraph-index={paragraphIndex} className="mb-1">
-          {paragraphText}
-        </p>
+        <ParagraphBlock paragraph={paragraph} />
       </button>
 
-      {/* Fixed-height slot for counts + reaction bar, so text doesn't jump. */}
-      <div className="mb-5 min-h-[44px]">
-        {barOpen ? (
-          <ReactionBar
-            myReactions={myReactions}
-            pendingType={pendingType}
-            onToggle={handleToggle}
-            novelId={novelId}
-            chapterId={chapterId}
-            paragraphIndex={paragraphIndex}
-            paragraphText={paragraphText}
-            commentCount={initialCommentCount}
-          />
-        ) : (
-          <ParagraphCountsRow topReactions={topReactions} total={counts.total} commentCount={initialCommentCount} />
-        )}
-      </div>
+      {interactive && (
+        <div className="mb-5 min-h-[44px]">
+          {barOpen ? (
+            <ReactionBar
+              myReactions={myReactions}
+              pendingType={pendingType}
+              onToggle={handleToggle}
+              novelId={novelId}
+              chapterId={chapterId}
+              paragraphPid={paragraphPid}
+              commentCount={initialCommentCount}
+            />
+          ) : (
+            <ParagraphCountsRow topReactions={topReactions} total={counts.total} commentCount={initialCommentCount} />
+          )}
+        </div>
+      )}
 
       {needsLogin && (
-        <div
-          role="dialog"
-          aria-modal="true"
-          className="mb-5 rounded-lg border border-current/30 p-3 text-sm"
-        >
+        <div role="dialog" aria-modal="true" className="mb-5 rounded-lg border border-current/30 p-3 text-sm">
           <p className="mb-2">Log in to react to paragraphs.</p>
           <div className="flex gap-3">
             <Link href="/login" className="rounded-full border border-current px-3 py-1">
@@ -167,6 +150,38 @@ export function ParagraphReactions({
   );
 }
 
+function ParagraphBlock({ paragraph }: { paragraph: Paragraph }) {
+  if (paragraph.kind === "break") {
+    return (
+      <div className="my-2 text-center text-xl opacity-50" aria-hidden>
+        &sect; &sect; &sect;
+      </div>
+    );
+  }
+  if (paragraph.kind === "h") {
+    return (
+      <h3 data-paragraph-pid={paragraph.pid} className="mb-1 text-lg font-semibold">
+        <ParagraphRuns runs={paragraph.runs} />
+      </h3>
+    );
+  }
+  if (paragraph.kind === "quote") {
+    return (
+      <blockquote
+        data-paragraph-pid={paragraph.pid}
+        className="mb-1 border-l-2 border-current/40 pl-4 italic"
+      >
+        <ParagraphRuns runs={paragraph.runs} />
+      </blockquote>
+    );
+  }
+  return (
+    <p data-paragraph-pid={paragraph.pid} className="mb-1">
+      <ParagraphRuns runs={paragraph.runs} />
+    </p>
+  );
+}
+
 function ParagraphCountsRow({
   topReactions,
   total,
@@ -176,10 +191,7 @@ function ParagraphCountsRow({
   total: number;
   commentCount: number;
 }) {
-  if (topReactions.length === 0 && commentCount === 0) {
-    // Empty slot — height already reserved by the parent's min-h.
-    return <span aria-hidden />;
-  }
+  if (topReactions.length === 0 && commentCount === 0) return <span aria-hidden />;
   return (
     <div className="flex flex-wrap items-center gap-2 text-xs opacity-70">
       {topReactions.map(([type, count]) => (
@@ -188,9 +200,7 @@ function ParagraphCountsRow({
           <span>{count}</span>
         </span>
       ))}
-      {topReactions.length > 0 && total > 0 && (
-        <span className="opacity-60">{total} total</span>
-      )}
+      {topReactions.length > 0 && total > 0 && <span className="opacity-60">{total} total</span>}
       {commentCount > 0 && (
         <span className="opacity-60">
           &middot; {commentCount} comment{commentCount === 1 ? "" : "s"}
@@ -206,8 +216,7 @@ function ReactionBar({
   onToggle,
   novelId,
   chapterId,
-  paragraphIndex,
-  paragraphText,
+  paragraphPid,
   commentCount,
 }: {
   myReactions: Set<ReactionType>;
@@ -215,8 +224,7 @@ function ReactionBar({
   onToggle: (type: ReactionType) => void;
   novelId: string;
   chapterId: string;
-  paragraphIndex: number;
-  paragraphText: string;
+  paragraphPid: string;
   commentCount: number;
 }) {
   return (
@@ -247,10 +255,7 @@ function ReactionBar({
         );
       })}
       <Link
-        href={{
-          pathname: `/novels/${novelId}/chapters/${chapterId}/paragraphs/${paragraphIndex}`,
-          query: { text: paragraphText.slice(0, 240) },
-        }}
+        href={`/novels/${novelId}/chapters/${chapterId}/paragraphs/${paragraphPid}`}
         onClick={(e) => e.stopPropagation()}
         className="ml-1 inline-flex items-center gap-1 rounded-full border border-current/30 px-3 py-1 text-xs"
       >

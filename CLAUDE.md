@@ -48,7 +48,7 @@ src/
           [chapterId]/          Chapter reader (records reads fire-and-forget)
             edit/               Edit a chapter
             comments/           Chapter-wide comments (threaded, 1 level)
-            paragraphs/[i]/     Per-paragraph discussion page
+            paragraphs/[pid]/   Per-paragraph discussion page (keyed on pid)
   components/                   UI building blocks (mostly client components)
     ParagraphReactions.tsx      Tap-to-react bar + counts under each paragraph
     ChapterCommentThread.tsx    One thread + inline reply form
@@ -74,7 +74,15 @@ src/
     actions/                    Server Actions (writes: auth, novels, chapters,
                                 library, reading progress, profile, reactions,
                                 comments, reads, blockedTags, ratings)
-    reading.ts                  Splits chapter text into indexed paragraphs
+    reading.ts                  Legacy paragraph splitter (kept for fallback
+                                 on chapters that haven't been touched since
+                                 the 0008 backfill; chapter-content is the
+                                 canonical path now)
+    chapterContent.ts           Paragraph type (pid + kind + runs), markdown-
+                                 lite parser + serialiser, paste sanitiser,
+                                 word/char/reading stats, assignPids (diff by
+                                 text so reactions and comments follow
+                                 unchanged paragraphs across an edit)
     reactions.ts                Reaction labels, emoji, thresholds
     rankings.ts                 Shared thresholds (RATING_MIN_COUNT,
                                  BOARD_MIN_QUALIFIERS) + board labels
@@ -102,6 +110,27 @@ supabase/
                                        excludes the novel's own author from every
                                        signal.
                                      - get_author_novel_stats() SECURITY DEFINER.
+    0008_editor.sql                  Chapter editor upgrade:
+                                     - chapters.paragraphs (jsonb array of
+                                       {pid, kind, runs}) becomes the source
+                                       of truth for a chapter's content;
+                                       chapters.body kept in sync as a
+                                       plain-text fallback.
+                                     - paragraph_reactions / reaction_counts /
+                                       comments keyed on paragraph_pid; the
+                                       old paragraph_index columns become
+                                       legacy. Backfill assigns fresh pids to
+                                       every existing chapter's paragraphs
+                                       and rewrites every existing reaction
+                                       and comment onto the pid for the
+                                       position it currently references —
+                                       nothing is dropped.
+                                     - volumes table + chapters.volume_id.
+                                     - chapters.publish_at + author_note_top
+                                       + author_note_bottom.
+                                     - publish_scheduled_chapters() flips
+                                       scheduled chapters live; a new pg_cron
+                                       job runs it every 5 minutes.
     0007_classification.sql          Novel classification rebuild:
                                      - novels.demographic (fixed 5 values).
                                      - novel_genres many-to-many, cap 9 via
@@ -154,9 +183,34 @@ supabase/
   UI-level checks (e.g. redirecting non-owners away from an edit page) are a
   courtesy, not the real gate — don't remove the RLS policies and rely on
   the UI instead.
-- **Paragraphs have a stable index** (`src/lib/reading.ts`). Reactions
-  and paragraph comments key off this index. Don't renumber paragraphs
-  based on anything that can shift between renders.
+- **Paragraphs have a stable pid, not a position.** Every paragraph on
+  a chapter has a UUID (`pid`) stored on `chapters.paragraphs` (jsonb).
+  `paragraph_reactions`, `paragraph_reaction_counts` and
+  `paragraph_comments` all key on `paragraph_pid`. The editor's save
+  path (see `src/lib/actions/chapters.ts` → `persistChapter`) reuses an
+  existing paragraph's pid whenever its plain text matches, so
+  reactions and comments follow a paragraph across an edit. A
+  genuinely new paragraph gets a fresh pid; a genuinely deleted one is
+  either dropped silently (nothing on it) or the editor warns the
+  author before saving (`droppedPids` + the confirm-drop flow). If you
+  ever key reactions or comments on paragraph index again, you'll silently
+  attach them to the wrong paragraph the next time an author edits.
+- **Content storage is a typed JSON tree, never HTML.**
+  `chapters.paragraphs` is `[{pid, kind, runs}]` (kinds:
+  `p | h | quote | break`; runs: `{t, b?, i?}`). The reader walks that
+  typed tree and emits only `<p>`, `<h3>`, `<blockquote>`, `<hr>`,
+  `<strong>`, `<em>` — no `dangerouslySetInnerHTML` anywhere. Pasted
+  HTML from Word / Google Docs is sanitised into markdown-lite on the
+  way in (`pasteHtmlToMarkdown`) and re-parsed to that same JSON
+  structure on save (`parseMarkdownParagraphs` + `assignPids`). Reader
+  fallback: if `paragraphs` is empty (a legacy chapter that hasn't been
+  re-saved since the 0008 backfill), the app splits `chapters.body` on
+  blank lines and assigns fresh pids on the fly.
+- **Scheduled publishes run in the database, not on a page load.**
+  Setting `chapters.publish_at` future keeps the chapter invisible
+  until `publish_scheduled_chapters()` flips it, scheduled every 5
+  minutes via pg_cron. `published_at` is set to the moment it actually
+  went live so Recently Updated is honest.
 - **Spoilers are enforced in the query, not with CSS.** The reader-facing
   fetch in `src/lib/data/comments.ts` splits into two passes: first row
   metadata (id, author, spoiler flag), then bodies for the visible rows

@@ -104,6 +104,11 @@ export interface Database {
           novel_id: string;
           title: string;
           body: string;
+          paragraphs: unknown; // jsonb — typed at the callsite via Paragraph[]
+          author_note_top: string | null;
+          author_note_bottom: string | null;
+          publish_at: string | null;
+          volume_id: string | null;
           order_number: number;
           is_published: boolean;
           published_at: string | null;
@@ -115,6 +120,11 @@ export interface Database {
           novel_id: string;
           title: string;
           body?: string;
+          paragraphs?: unknown;
+          author_note_top?: string | null;
+          author_note_bottom?: string | null;
+          publish_at?: string | null;
+          volume_id?: string | null;
           order_number: number;
           is_published?: boolean;
           published_at?: string | null;
@@ -122,9 +132,34 @@ export interface Database {
         Update: {
           title?: string;
           body?: string;
+          paragraphs?: unknown;
+          author_note_top?: string | null;
+          author_note_bottom?: string | null;
+          publish_at?: string | null;
+          volume_id?: string | null;
           order_number?: number;
           is_published?: boolean;
           published_at?: string | null;
+        };
+        Relationships: [];
+      };
+      volumes: {
+        Row: {
+          id: string;
+          novel_id: string;
+          name: string;
+          position: number;
+          created_at: string;
+        };
+        Insert: {
+          id?: string;
+          novel_id: string;
+          name: string;
+          position: number;
+        };
+        Update: {
+          name?: string;
+          position?: number;
         };
         Relationships: [];
       };
@@ -160,6 +195,7 @@ export interface Database {
           id: string;
           user_id: string;
           chapter_id: string;
+          paragraph_pid: string;
           paragraph_index: number;
           reaction_type: ReactionType;
           created_at: string;
@@ -168,7 +204,8 @@ export interface Database {
           id?: string;
           user_id: string;
           chapter_id: string;
-          paragraph_index: number;
+          paragraph_pid: string;
+          paragraph_index?: number;
           reaction_type: ReactionType;
         };
         Update: Record<string, never>;
@@ -177,6 +214,7 @@ export interface Database {
       paragraph_reaction_counts: {
         Row: {
           chapter_id: string;
+          paragraph_pid: string;
           paragraph_index: number;
           shocked: number;
           heartbreak: number;
@@ -188,7 +226,8 @@ export interface Database {
         };
         Insert: {
           chapter_id: string;
-          paragraph_index: number;
+          paragraph_pid: string;
+          paragraph_index?: number;
         };
         Update: Record<string, never>;
         Relationships: [];
@@ -198,6 +237,7 @@ export interface Database {
           id: string;
           user_id: string;
           chapter_id: string;
+          paragraph_pid: string;
           paragraph_index: number;
           body: string;
           is_spoiler: boolean;
@@ -207,7 +247,8 @@ export interface Database {
           id?: string;
           user_id: string;
           chapter_id: string;
-          paragraph_index: number;
+          paragraph_pid: string;
+          paragraph_index?: number;
           body: string;
           is_spoiler?: boolean;
         };

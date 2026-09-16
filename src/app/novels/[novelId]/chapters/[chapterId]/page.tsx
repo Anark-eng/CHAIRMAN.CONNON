@@ -5,29 +5,44 @@ import { getCurrentUserAndProfile } from "@/lib/data/profile";
 import { getChapter, getChaptersForNovel, getNovelById } from "@/lib/data/novels";
 import { getMyReactionsForChapter, getReactionCountsForChapter } from "@/lib/data/reactions";
 import { getSuggestionsForNovel } from "@/lib/data/suggestions";
-import { splitParagraphs } from "@/lib/reading";
+import { assignPids, parseMarkdownParagraphs, type Paragraph } from "@/lib/chapterContent";
 import type { ReactionCountsShape } from "@/lib/reactions";
 import type { ReactionType } from "@/lib/supabase/database.types";
 
 export default async function ChapterPage({
   params,
+  searchParams,
 }: {
   params: Promise<{ novelId: string; chapterId: string }>;
+  searchParams: Promise<{ preview?: string }>;
 }) {
   const { novelId, chapterId } = await params;
+  const { preview } = await searchParams;
   const { user } = await getCurrentUserAndProfile();
 
   const [novel, chapter] = await Promise.all([getNovelById(novelId), getChapter(novelId, chapterId)]);
   if (!novel || !chapter) notFound();
 
   const isOwner = user?.id === novel.author_id;
-  const paragraphs = splitParagraphs(chapter.body);
+  const previewMode = preview === "1" && isOwner;
+
+  // Prefer the stored paragraphs (with pids). Fall back to splitting
+  // body if this chapter somehow has no stored paragraphs — that only
+  // happens on chapters that haven't been touched since the 0008
+  // backfill; pids are assigned on-the-fly so reactions still key
+  // consistently until the next save.
+  const storedParagraphs = Array.isArray(chapter.paragraphs)
+    ? (chapter.paragraphs as Paragraph[])
+    : [];
+  const paragraphs: Paragraph[] = storedParagraphs.length > 0
+    ? storedParagraphs
+    : assignPids(parseMarkdownParagraphs(chapter.body ?? ""), []);
 
   const [chapters, countRows, myReactions, paragraphCommentCounts, chapterCommentCount] = await Promise.all([
     getChaptersForNovel(novelId, { includeDrafts: false }),
     getReactionCountsForChapter(chapter.id),
     user ? getMyReactionsForChapter(user.id, chapter.id) : Promise.resolve([]),
-    getParagraphCommentCounts(chapter.id, paragraphs.map((p) => p.index)),
+    getParagraphCommentCounts(chapter.id, paragraphs.map((p) => p.pid)),
     getChapterCommentCount(chapter.id),
   ]);
 
@@ -41,20 +56,17 @@ export default async function ChapterPage({
   const nextChapter =
     currentIndex >= 0 && currentIndex < orderedChapters.length - 1 ? orderedChapters[currentIndex + 1] : null;
 
-  // The caught-up card only makes sense on the newest PUBLISHED chapter --
-  // never on a draft the author is previewing, and never on an earlier
-  // chapter (where the next-chapter button belongs instead).
   const publishedOrdered = orderedChapters.filter((c) => c.is_published);
   const newestPublished = publishedOrdered[publishedOrdered.length - 1];
   const isNewestChapter = Boolean(newestPublished && newestPublished.id === chapter.id) && chapter.is_published;
 
-  const suggestions = isNewestChapter
+  const suggestions = isNewestChapter && !previewMode
     ? await getSuggestionsForNovel(novel.id, user?.id ?? null, 3)
     : [];
 
-  const countsByIndex: Record<number, ReactionCountsShape> = {};
+  const countsByPid: Record<string, ReactionCountsShape> = {};
   for (const row of countRows) {
-    countsByIndex[row.paragraph_index] = {
+    countsByPid[row.paragraph_pid] = {
       shocked: row.shocked,
       heartbreak: row.heartbreak,
       laughed: row.laughed,
@@ -65,21 +77,21 @@ export default async function ChapterPage({
     };
   }
 
-  const myReactionsByIndex: Record<number, ReactionType[]> = {};
+  const myReactionsByPid: Record<string, ReactionType[]> = {};
   for (const row of myReactions) {
-    const list = myReactionsByIndex[row.paragraph_index] ?? (myReactionsByIndex[row.paragraph_index] = []);
+    const list = myReactionsByPid[row.paragraph_pid] ?? (myReactionsByPid[row.paragraph_pid] = []);
     list.push(row.reaction_type);
   }
 
-  const commentCountsByIndex: Record<number, number> = {};
-  paragraphCommentCounts.forEach((count, idx) => {
-    commentCountsByIndex[idx] = count;
+  const commentCountsByPid: Record<string, number> = {};
+  paragraphCommentCounts.forEach((count, pid) => {
+    commentCountsByPid[pid] = count;
   });
 
   const reactionData: ChapterReactionData = {
-    countsByIndex,
-    myReactionsByIndex,
-    paragraphCommentCounts: commentCountsByIndex,
+    countsByPid,
+    myReactionsByPid,
+    paragraphCommentCountsByPid: commentCountsByPid,
   };
 
   return (
@@ -89,16 +101,19 @@ export default async function ChapterPage({
       chapterId={chapter.id}
       chapterTitle={chapter.title}
       paragraphs={paragraphs}
+      authorNoteTop={chapter.author_note_top}
+      authorNoteBottom={chapter.author_note_bottom}
       prevChapter={prevChapter}
       nextChapter={nextChapter}
       tableOfContents={chapters}
-      trackProgress={Boolean(user) && chapter.is_published && !isOwner}
+      trackProgress={Boolean(user) && chapter.is_published && !isOwner && !previewMode}
       reactions={reactionData}
       isLoggedIn={Boolean(user)}
       chapterCommentCount={chapterCommentCount}
-      isNewestChapter={isNewestChapter}
+      isNewestChapter={isNewestChapter && !previewMode}
       novelStatus={novel.status}
       suggestions={suggestions}
+      preview={previewMode}
     />
   );
 }

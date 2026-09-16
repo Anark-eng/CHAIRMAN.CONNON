@@ -79,7 +79,7 @@ async function fetchWithBodies<T extends { id: string; is_spoiler: boolean }>(
 
 export async function getParagraphComments(
   chapterId: string,
-  paragraphIndex: number,
+  paragraphPid: string,
 ): Promise<CommentView[]> {
   const supabase = await createClient();
 
@@ -87,7 +87,7 @@ export async function getParagraphComments(
     .from("paragraph_comments")
     .select("id, user_id, is_spoiler, created_at, profiles(pen_name)")
     .eq("chapter_id", chapterId)
-    .eq("paragraph_index", paragraphIndex)
+    .eq("paragraph_pid", paragraphPid)
     .order("created_at", { ascending: false });
 
   if (skeletonError) throw skeletonError;
@@ -108,22 +108,24 @@ export async function getParagraphComments(
   return withBodies.map(toParagraphView);
 }
 
+// Keyed on paragraph_pid so reader-side per-paragraph badges follow
+// each paragraph through edits.
 export async function getParagraphCommentCounts(
   chapterId: string,
-  paragraphIndexes: number[],
-): Promise<Map<number, number>> {
-  if (paragraphIndexes.length === 0) return new Map();
+  paragraphPids: string[],
+): Promise<Map<string, number>> {
+  if (paragraphPids.length === 0) return new Map();
   const supabase = await createClient();
   const { data, error } = await supabase
     .from("paragraph_comments")
-    .select("paragraph_index")
+    .select("paragraph_pid")
     .eq("chapter_id", chapterId)
-    .in("paragraph_index", paragraphIndexes);
+    .in("paragraph_pid", paragraphPids);
 
   if (error) throw error;
-  const counts = new Map<number, number>();
+  const counts = new Map<string, number>();
   for (const row of data ?? []) {
-    counts.set(row.paragraph_index, (counts.get(row.paragraph_index) ?? 0) + 1);
+    counts.set(row.paragraph_pid, (counts.get(row.paragraph_pid) ?? 0) + 1);
   }
   return counts;
 }

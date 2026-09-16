@@ -24,7 +24,7 @@ function validateBody(raw: FormDataEntryValue | null): { ok: true; body: string 
 export async function addParagraphComment(
   novelId: string,
   chapterId: string,
-  paragraphIndex: number,
+  paragraphPid: string,
   _prevState: CommentActionState,
   formData: FormData,
 ): Promise<CommentActionState> {
@@ -42,14 +42,15 @@ export async function addParagraphComment(
   const { error } = await supabase.from("paragraph_comments").insert({
     user_id: user.id,
     chapter_id: chapterId,
-    paragraph_index: paragraphIndex,
+    paragraph_pid: paragraphPid,
+    paragraph_index: 0,
     body: validated.body,
     is_spoiler: isSpoiler,
   });
 
   if (error) return { error: error.message };
 
-  revalidatePath(`/novels/${novelId}/chapters/${chapterId}/paragraphs/${paragraphIndex}`);
+  revalidatePath(`/novels/${novelId}/chapters/${chapterId}/paragraphs/${paragraphPid}`);
   revalidatePath(`/novels/${novelId}/chapters/${chapterId}`);
   return {};
 }
@@ -57,18 +58,15 @@ export async function addParagraphComment(
 export async function deleteParagraphComment(
   novelId: string,
   chapterId: string,
-  paragraphIndex: number,
+  paragraphPid: string,
   commentId: string,
 ): Promise<void> {
   const supabase = await createClient();
-  // RLS enforces the "own comment OR novel's author" rule.
   await supabase.from("paragraph_comments").delete().eq("id", commentId);
-  revalidatePath(`/novels/${novelId}/chapters/${chapterId}/paragraphs/${paragraphIndex}`);
+  revalidatePath(`/novels/${novelId}/chapters/${chapterId}/paragraphs/${paragraphPid}`);
   revalidatePath(`/novels/${novelId}/chapters/${chapterId}`);
 }
 
-// Fetch the body of one spoiler-flagged paragraph comment. Called from
-// the client when the reader taps "reveal".
 export async function revealParagraphComment(commentId: string): Promise<{ body: string | null }> {
   return { body: await revealParagraphCommentBody(commentId) };
 }
