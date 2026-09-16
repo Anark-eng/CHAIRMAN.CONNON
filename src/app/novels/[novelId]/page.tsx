@@ -2,6 +2,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { AuthorStatsPanel } from "@/components/AuthorStatsPanel";
 import { BoardPositionRow } from "@/components/BoardPositionRow";
+import { ChapterListForAuthor } from "@/components/ChapterListForAuthor";
 import { CoverThumb } from "@/components/CoverThumb";
 import { RatingControl } from "@/components/RatingControl";
 import { StatusBadge } from "@/components/StatusBadge";
@@ -14,6 +15,7 @@ import { getChaptersForNovel, getNovelById } from "@/lib/data/novels";
 import { isInLibrary } from "@/lib/data/library";
 import { getLastReadChapterId } from "@/lib/data/progress";
 import { getMyRatingFor, getRatingSummary } from "@/lib/data/ratings";
+import { createClient } from "@/lib/supabase/server";
 import { demographicLabel } from "@/lib/classification";
 import { BOARD_MIN_QUALIFIERS, type BoardKey } from "@/lib/rankings";
 
@@ -30,6 +32,7 @@ export default async function NovelPage({
 
   const isOwner = user?.id === novel.author_id;
 
+  const supabase = await createClient();
   const [
     chapters,
     inLibrary,
@@ -40,6 +43,7 @@ export default async function NovelPage({
     myRating,
     positions,
     boardCounts,
+    volumeQueryResult,
   ] = await Promise.all([
     getChaptersForNovel(novelId, { includeDrafts: isOwner }),
     user ? isInLibrary(user.id, novelId) : Promise.resolve(false),
@@ -54,7 +58,17 @@ export default async function NovelPage({
       getBoardQualifierCount("top_rated"),
       getBoardQualifierCount("most_read"),
     ]).then(([trending, top_rated, most_read]) => ({ trending, top_rated, most_read })),
+    supabase
+      .from("volumes")
+      .select("id, name, position")
+      .eq("novel_id", novelId)
+      .order("position", { ascending: true }),
   ]);
+  const volumes = (volumeQueryResult.data ?? []).map((v) => ({
+    id: v.id,
+    name: v.name,
+    position: v.position,
+  }));
 
   // A per-board position badge is only shown when THAT board is live
   // under the 10-qualifier rule.
@@ -179,38 +193,12 @@ export default async function NovelPage({
 
       {isOwner && authorStats && <AuthorStatsPanel stats={authorStats} />}
 
-      <section className="mt-10">
-        <h2 className="mb-3 text-lg font-semibold">Chapters</h2>
-        {chapters.length === 0 ? (
-          <p className="text-[var(--muted)]">No chapters yet.</p>
-        ) : (
-          <ol className="divide-y divide-[var(--border)] rounded-xl border border-[var(--border)] bg-[var(--surface)]">
-            {chapters.map((chapter) => (
-              <li key={chapter.id} className="flex items-center justify-between px-4 py-3">
-                <Link
-                  href={`/novels/${novelId}/chapters/${chapter.id}`}
-                  className="hover:text-[var(--brand)]"
-                >
-                  {chapter.order_number}. {chapter.title}
-                </Link>
-                <div className="flex items-center gap-3">
-                  {!chapter.is_published && (
-                    <span className="text-xs font-medium text-amber-600">Draft</span>
-                  )}
-                  {isOwner && (
-                    <Link
-                      href={`/novels/${novelId}/chapters/${chapter.id}/edit`}
-                      className="text-xs text-[var(--muted)]"
-                    >
-                      Edit
-                    </Link>
-                  )}
-                </div>
-              </li>
-            ))}
-          </ol>
-        )}
-      </section>
+      <ChapterListForAuthor
+        novelId={novelId}
+        chapters={chapters}
+        volumes={volumes}
+        isOwner={isOwner}
+      />
     </div>
   );
 }

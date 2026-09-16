@@ -4,10 +4,11 @@ import { useEffect, useState, useSyncExternalStore } from "react";
 import Link from "next/link";
 import { saveReadingProgress } from "@/lib/actions/progress";
 import { recordChapterRead } from "@/lib/actions/reads";
-import type { Paragraph } from "@/lib/reading";
+import type { Paragraph } from "@/lib/chapterContent";
 import { EMPTY_COUNTS, type ReactionCountsShape } from "@/lib/reactions";
 import type { ReactionType } from "@/lib/supabase/database.types";
 import { ParagraphReactions } from "@/components/ParagraphReactions";
+import { AuthorNote } from "@/components/ParagraphView";
 import { CaughtUpCard } from "@/components/CaughtUpCard";
 import type { NovelCardData, NovelStatus } from "@/lib/data/types";
 import {
@@ -30,9 +31,9 @@ interface ChapterNavItem {
 }
 
 export interface ChapterReactionData {
-  countsByIndex: Record<number, ReactionCountsShape>;
-  myReactionsByIndex: Record<number, ReactionType[]>;
-  paragraphCommentCounts: Record<number, number>;
+  countsByPid: Record<string, ReactionCountsShape>;
+  myReactionsByPid: Record<string, ReactionType[]>;
+  paragraphCommentCountsByPid: Record<string, number>;
 }
 
 export function ChapterReader({
@@ -41,6 +42,8 @@ export function ChapterReader({
   chapterId,
   chapterTitle,
   paragraphs,
+  authorNoteTop,
+  authorNoteBottom,
   prevChapter,
   nextChapter,
   tableOfContents,
@@ -51,12 +54,15 @@ export function ChapterReader({
   isNewestChapter,
   novelStatus,
   suggestions,
+  preview,
 }: {
   novelId: string;
   novelTitle: string;
   chapterId: string;
   chapterTitle: string;
   paragraphs: Paragraph[];
+  authorNoteTop: string | null;
+  authorNoteBottom: string | null;
   prevChapter: ChapterNavItem | null;
   nextChapter: ChapterNavItem | null;
   tableOfContents: ChapterNavItem[];
@@ -67,12 +73,19 @@ export function ChapterReader({
   isNewestChapter: boolean;
   novelStatus: NovelStatus;
   suggestions: NovelCardData[];
+  preview: boolean;
 }) {
   const settings = useSyncExternalStore(subscribe, getSnapshot, getServerSnapshot);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [tocOpen, setTocOpen] = useState(false);
 
   useEffect(() => {
+    if (preview) {
+      // Preview mode: no reading progress, no read recording. This is
+      // an author looking at their own draft.
+      window.scrollTo(0, 0);
+      return;
+    }
     if (trackProgress) {
       saveReadingProgress(novelId, chapterId).catch(() => {});
     }
@@ -80,7 +93,7 @@ export function ChapterReader({
     // the "not the novel's own author" rule, and the per-day dedup itself.
     recordChapterRead(novelId, chapterId).catch(() => {});
     window.scrollTo(0, 0);
-  }, [novelId, chapterId, trackProgress]);
+  }, [novelId, chapterId, trackProgress, preview]);
 
   function update<K extends keyof ReaderSettings>(key: K, value: ReaderSettings[K]) {
     updateReaderSettings({ [key]: value });
@@ -200,24 +213,35 @@ export function ChapterReader({
 
         <h1 className="mb-6 text-xl font-semibold">{chapterTitle}</h1>
 
+        {preview && (
+          <p className="mb-4 rounded-lg border border-dashed border-current/30 px-3 py-2 text-xs opacity-80">
+            Preview mode — this is exactly what a reader sees. Nothing is being published, and this
+            view doesn&apos;t count as a read.
+          </p>
+        )}
+
+        <AuthorNote position="top" text={authorNoteTop} />
+
         <div
           className={settings.fontFamily === "serif" ? "font-serif" : "font-sans"}
           style={{ fontSize: `${settings.fontSize}px`, lineHeight: settings.lineHeight }}
         >
           {paragraphs.map((p) => (
             <ParagraphReactions
-              key={p.index}
+              key={p.pid}
               novelId={novelId}
               chapterId={chapterId}
-              paragraphIndex={p.index}
-              paragraphText={p.text}
-              initialCounts={reactions.countsByIndex[p.index] ?? EMPTY_COUNTS}
-              initialMyReactions={reactions.myReactionsByIndex[p.index] ?? []}
-              initialCommentCount={reactions.paragraphCommentCounts[p.index] ?? 0}
+              paragraph={p}
+              initialCounts={reactions.countsByPid[p.pid] ?? EMPTY_COUNTS}
+              initialMyReactions={reactions.myReactionsByPid[p.pid] ?? []}
+              initialCommentCount={reactions.paragraphCommentCountsByPid[p.pid] ?? 0}
               isLoggedIn={isLoggedIn}
+              interactive={!preview}
             />
           ))}
         </div>
+
+        <AuthorNote position="bottom" text={authorNoteBottom} />
 
         <div className="mt-10 flex flex-wrap items-center justify-between gap-3 border-t border-current/20 pt-6 text-sm">
           {prevChapter ? (

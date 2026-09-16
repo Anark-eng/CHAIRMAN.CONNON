@@ -38,9 +38,16 @@ export interface ChapterSummary {
   order_number: number;
   is_published: boolean;
   published_at: string | null;
+  publish_at?: string | null;
+  volume_id?: string | null;
 }
 
 export interface ChapterDetail extends ChapterSummary {
   novel_id: string;
   body: string;
+  paragraphs: unknown; // Paragraph[] — consumer casts via chapterContent types
+  author_note_top: string | null;
+  author_note_bottom: string | null;
+  publish_at: string | null;
+  volume_id: string | null;
 }

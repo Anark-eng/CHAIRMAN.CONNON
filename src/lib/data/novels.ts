@@ -324,7 +324,7 @@ export async function getChaptersForNovel(
   const supabase = await createClient();
   let q = supabase
     .from("chapters")
-    .select("id, title, order_number, is_published, published_at")
+    .select("id, title, order_number, is_published, published_at, publish_at, volume_id")
     .eq("novel_id", novelId)
     .order("order_number", { ascending: true });
 
@@ -339,13 +339,15 @@ export async function getChapter(novelId: string, chapterId: string): Promise<Ch
   const supabase = await createClient();
   const { data, error } = await supabase
     .from("chapters")
-    .select("id, novel_id, title, body, order_number, is_published, published_at")
+    .select(
+      "id, novel_id, title, body, paragraphs, author_note_top, author_note_bottom, publish_at, volume_id, order_number, is_published, published_at",
+    )
     .eq("novel_id", novelId)
     .eq("id", chapterId)
     .maybeSingle();
 
   if (error) throw error;
-  return data;
+  return data as unknown as ChapterDetail | null;
 }
 
 export async function getMyNovels(authorId: string) {
