@@ -10,7 +10,12 @@ export async function addToLibrary(novelId: string): Promise<void> {
   } = await supabase.auth.getUser();
   if (!user) return;
 
-  await supabase.from("library_entries").insert({ user_id: user.id, novel_id: novelId });
+  // Idempotent: a duplicate add returns silently instead of erroring
+  // out. The unique (user_id, novel_id) constraint still guarantees
+  // no duplicate row is created.
+  await supabase
+    .from("library_entries")
+    .upsert({ user_id: user.id, novel_id: novelId }, { onConflict: "user_id,novel_id", ignoreDuplicates: true });
 
   revalidatePath(`/novels/${novelId}`);
   revalidatePath("/library");

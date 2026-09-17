@@ -350,6 +350,69 @@ export async function getChapter(novelId: string, chapterId: string): Promise<Ch
   return data as unknown as ChapterDetail | null;
 }
 
+// Other novels by the same author, most recent first. Used on the
+// novel page (small "more from this author" strip) and on the author
+// profile page. Drafts stay hidden by RLS; unpublished-status novels
+// still appear, since a hiatus or completed one is still a real novel.
+export async function getOtherNovelsByAuthor(
+  authorId: string,
+  excludeNovelId: string,
+  limit = 6,
+): Promise<NovelCardData[]> {
+  const supabase = await createClient();
+  const { data, error } = await supabase
+    .from("novels")
+    .select(CARD_SELECT)
+    .eq("author_id", authorId)
+    .neq("id", excludeNovelId)
+    .order("created_at", { ascending: false })
+    .limit(limit);
+  if (error) throw error;
+  return (data ?? []).map((row) => toCard(row as unknown as NovelRow));
+}
+
+// Distinct-reader count for a novel, straight off the same table Most
+// Read reads from. Returns null when the novel has no row (no reads
+// recorded yet); the caller then just doesn't render the metric.
+export async function getReaderCountForNovel(novelId: string): Promise<number | null> {
+  const supabase = await createClient();
+  const { data, error } = await supabase
+    .from("most_read_scores")
+    .select("distinct_readers")
+    .eq("novel_id", novelId)
+    .maybeSingle();
+  if (error) return null;
+  return data ? Number(data.distinct_readers) : null;
+}
+
+// The author's public pen name. Profiles are publicly readable per
+// migration 0001; this is the query the author-profile page uses.
+export async function getAuthorPenName(authorId: string): Promise<string | null> {
+  const supabase = await createClient();
+  const { data, error } = await supabase
+    .from("profiles")
+    .select("pen_name")
+    .eq("id", authorId)
+    .maybeSingle();
+  if (error) return null;
+  return data?.pen_name ?? null;
+}
+
+// Every novel the given author has written, most recent first, in the
+// same card shape used on Home / Browse. Used by the author-profile
+// page — includes drafts only when the viewer IS that author (RLS
+// enforces that; the query itself doesn't need special-casing).
+export async function getNovelsByAuthor(authorId: string): Promise<NovelCardData[]> {
+  const supabase = await createClient();
+  const { data, error } = await supabase
+    .from("novels")
+    .select(CARD_SELECT)
+    .eq("author_id", authorId)
+    .order("created_at", { ascending: false });
+  if (error) throw error;
+  return (data ?? []).map((row) => toCard(row as unknown as NovelRow));
+}
+
 export async function getMyNovels(authorId: string) {
   const supabase = await createClient();
   const { data: novels, error } = await supabase
