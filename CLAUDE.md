@@ -90,7 +90,10 @@ src/
                                  (MAX_GENRES_PER_NOVEL,
                                  TAG_APPROVAL_MIN_NOVELS,
                                  MAX_TAG_NAME_LENGTH, DEMOGRAPHICS list,
+                                 TAG_GROUPS fixed set + labels,
                                  normaliseTagName mirror of the SQL)
+    browseSort.ts               SearchSort type + SEARCH_SORTS options
+                                 (client-safe; the data helper re-exports them)
     siteUrl.ts                  Origin used for auth-email redirect links
     guestKey.ts                 HMAC-signed random-id cookie for logged-out readers
 supabase/
@@ -169,6 +172,21 @@ supabase/
                                      - get_author_novel_stats() v2: adds rating
                                        stats + score histogram + all three
                                        board ranks.
+    0009_tag_groups.sql              Tag taxonomy grouping:
+                                     - tags.tag_group (text, CHECK on a fixed
+                                       set of 7: characters, tropes, setting,
+                                       style_pacing, themes, content_warnings,
+                                       other).
+                                     - Backfill: seeded tags are sorted into
+                                       groups by meaning; CW: tags to
+                                       content_warnings, everything else by
+                                       slug list. Untouched author tags fall
+                                       into "other".
+                                     - create_or_get_tag(name, group?) — new
+                                       optional argument; unknown/missing
+                                       group becomes "other". Single-arg
+                                       overload preserved so a redeploy isn't
+                                       needed to apply the migration.
   seed.sql                       Starter genres and tags
 ```
 
@@ -259,9 +277,17 @@ supabase/
   other.
 - **Classification thresholds live in one place too.** `src/lib/classification.ts`
   holds `MAX_GENRES_PER_NOVEL` (9), `TAG_APPROVAL_MIN_NOVELS` (3),
-  `MAX_TAG_NAME_LENGTH` (40), the fixed `DEMOGRAPHICS` list, and the
-  same normalisation as the DB's `normalise_tag_name()`. All mirrored
-  in migration 0007. Change both.
+  `MAX_TAG_NAME_LENGTH` (40), the fixed `DEMOGRAPHICS` list, `TAG_GROUPS`
+  (7 fixed values: characters, tropes, setting, style_pacing, themes,
+  content_warnings, other), and the same normalisation as the DB's
+  `normalise_tag_name()`. Mirrored in migrations 0007 + 0009. Change
+  both.
+- **Tag groups are fixed, not extensible.** The seven-value set is
+  enforced by a CHECK constraint on `tags.tag_group` and mirrored in
+  `TAG_GROUPS`. Genres and demographics are NOT tag groups — they live
+  on their own columns. An author-created tag with no group falls
+  into "other"; it still works everywhere, it's just filed under
+  Other in Browse's filter sheet.
 - **Genres are many per novel, demographics are one.** A novel carries
   up to 9 genres through `novel_genres`. `novels.demographic` is a
   single text column with a check constraint on the fixed 5 values.
