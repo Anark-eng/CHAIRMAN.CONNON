@@ -51,9 +51,9 @@ export interface Database {
         Relationships: [];
       };
       tags: {
-        Row: { id: string; name: string; slug: string; is_approved: boolean };
-        Insert: { id?: string; name: string; slug: string; is_approved?: boolean };
-        Update: { name?: string; slug?: string; is_approved?: boolean };
+        Row: { id: string; name: string; slug: string; is_approved: boolean; tag_group: string | null };
+        Insert: { id?: string; name: string; slug: string; is_approved?: boolean; tag_group?: string | null };
+        Update: { name?: string; slug?: string; is_approved?: boolean; tag_group?: string | null };
         Relationships: [];
       };
       novels: {

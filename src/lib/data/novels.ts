@@ -6,6 +6,7 @@ import type {
   GenreOption,
   NovelCardData,
   NovelDetailData,
+  NovelStatus,
   TagOption,
 } from "./types";
 
@@ -159,11 +160,21 @@ export async function getTrendingNovels(
   return orderedIds.map((id) => byId.get(id)).filter((n): n is NovelCardData => Boolean(n));
 }
 
-export type SearchSort = "newest" | "trending";
+// SearchSort + SEARCH_SORTS moved to src/lib/browseSort.ts so client
+// components can import them without pulling this server-only module.
+// Re-exported here for existing call sites.
+export { SEARCH_SORTS, type SearchSort } from "@/lib/browseSort";
+import type { SearchSort } from "@/lib/browseSort";
 
 export interface SearchNovelsParams {
   query?: string;
+  // Genres are many-per-novel; a list means "match ANY of these", which
+  // is what a reader browsing "Fantasy or Sci-Fi" expects. Backwards
+  // compatible with the old single-slug caller via genreSlug.
   genreSlug?: string;
+  genreSlugs?: string[];
+  demographic?: Demographic | null;
+  statuses?: NovelStatus[];
   includeTagSlugs?: string[];
   excludeTagSlugs?: string[];
   limit?: number;
@@ -171,22 +182,28 @@ export interface SearchNovelsParams {
   excludedNovelIds?: Set<string>;
 }
 
-// Resolve a genre slug to the set of novel ids carrying that genre.
-// Returns null if the slug doesn't match any genre (caller returns []).
-async function novelIdsForGenreSlug(genreSlug: string): Promise<Set<string> | null> {
+// Resolve one or more genre slugs to the novel ids that carry ANY of
+// them. Returns null when NONE of the slugs resolve to a real genre —
+// the caller treats that as an empty result.
+async function novelIdsForGenreSlugs(genreSlugs: string[]): Promise<Set<string> | null> {
+  if (genreSlugs.length === 0) return null;
   const supabase = await createClient();
-  const { data: genreRow } = await supabase.from("genres").select("id").eq("slug", genreSlug).maybeSingle();
-  if (!genreRow) return null;
+  const { data: genreRows } = await supabase.from("genres").select("id, slug").in("slug", genreSlugs);
+  const ids = (genreRows ?? []).map((g) => g.id);
+  if (ids.length === 0) return null;
   const { data: links } = await supabase
     .from("novel_genres")
     .select("novel_id")
-    .eq("genre_id", genreRow.id);
+    .in("genre_id", ids);
   return new Set((links ?? []).map((l) => l.novel_id));
 }
 
 export async function searchNovels({
   query,
   genreSlug,
+  genreSlugs,
+  demographic,
+  statuses,
   includeTagSlugs = [],
   excludeTagSlugs = [],
   limit = 40,
@@ -217,13 +234,18 @@ export async function searchNovels({
         .in("tag_id", includeIds);
       if (linkError) throw linkError;
 
-      const countByNovel = new Map<string, number>();
+      // Require ALL requested tags: a novel must have every include
+      // slug attached to make the cut. Set-per-novel dedup keeps the
+      // count honest against any duplicate links.
+      const seenByNovel = new Map<string, Set<string>>();
       for (const link of links ?? []) {
-        countByNovel.set(link.novel_id, (countByNovel.get(link.novel_id) ?? 0) + 1);
+        const s = seenByNovel.get(link.novel_id) ?? new Set<string>();
+        s.add(link.tag_id);
+        seenByNovel.set(link.novel_id, s);
       }
       const includedFromTags = new Set(
-        [...countByNovel.entries()]
-          .filter(([, count]) => count >= includeIds.length)
+        [...seenByNovel.entries()]
+          .filter(([, tags]) => tags.size >= includeIds.length)
           .map(([id]) => id),
       );
 
@@ -241,11 +263,15 @@ export async function searchNovels({
     }
   }
 
-  // A novel now carries several genres. Choosing a genre in Browse finds
-  // every novel that carries it — resolve slug → id set via the join
-  // table, then intersect with any tag-based inclusion.
-  if (genreSlug) {
-    const genreNovelIds = await novelIdsForGenreSlug(genreSlug);
+  // A novel carries multiple genres. Choosing several in Browse
+  // matches any novel that carries at least one of them. Slug list
+  // resolves through the join table.
+  const allGenreSlugs = [
+    ...(genreSlugs ?? []).filter(Boolean),
+    ...(genreSlug ? [genreSlug] : []),
+  ];
+  if (allGenreSlugs.length > 0) {
+    const genreNovelIds = await novelIdsForGenreSlugs(allGenreSlugs);
     if (genreNovelIds === null || genreNovelIds.size === 0) return [];
     if (includeNovelIds === null) {
       includeNovelIds = genreNovelIds;
@@ -257,39 +283,147 @@ export async function searchNovels({
     }
   }
 
-  if (sort === "trending") {
+  // Author-pen-name search: resolve pen names first, add them to a
+  // novel-id set that ORs with the title match. Kept as one query set
+  // rather than a client-side filter so the paging / ordering stay in
+  // the DB.
+  let matchingAuthorIds: string[] | null = null;
+  const trimmedQuery = query?.trim() ?? "";
+  if (trimmedQuery.length > 0) {
+    const { data: authorRows } = await supabase
+      .from("profiles")
+      .select("id")
+      .ilike("pen_name", `%${trimmedQuery}%`)
+      .limit(50);
+    matchingAuthorIds = (authorRows ?? []).map((r) => r.id);
+  }
+
+  // Score-ordered sorts pull an id list from the stored score table
+  // first, then hydrate novel rows in that same order.
+  if (sort === "trending" || sort === "most_read" || sort === "top_rated") {
+    const table =
+      sort === "trending" ? "trending_scores" : sort === "top_rated" ? "top_rated_scores" : "most_read_scores";
+    const orderCol =
+      sort === "trending" ? "score" : sort === "top_rated" ? "rank_score" : "distinct_readers";
     const { data: scoreRows, error: scoreError } = await supabase
-      .from("trending_scores")
+      .from(table)
       .select("novel_id")
-      .order("score", { ascending: false })
+      .order(orderCol, { ascending: false })
       .limit(limit * 4);
     if (scoreError) throw scoreError;
 
     let ids = (scoreRows ?? []).map((r) => r.novel_id).filter((id) => !excludedFromTags.has(id));
     if (includeNovelIds) ids = ids.filter((id) => includeNovelIds!.has(id));
-    ids = ids.slice(0, limit);
     if (ids.length === 0) return [];
 
-    let novelsQ = supabase.from("novels").select(CARD_SELECT).in("id", ids);
-    if (query && query.trim().length > 0) novelsQ = novelsQ.ilike("title", `%${query.trim()}%`);
-    const { data: novels, error: novelsError } = await novelsQ;
-    if (novelsError) throw novelsError;
-    const byId = new Map(
-      ((novels ?? []) as unknown as NovelRow[]).map((row) => [row.id, toCard(row)]),
-    );
-    return ids.map((id) => byId.get(id)).filter((n): n is NovelCardData => Boolean(n));
+    return hydrateNovelsInOrder(supabase, ids, {
+      demographic,
+      statuses,
+      titleQuery: trimmedQuery,
+      matchingAuthorIds,
+      limit,
+    });
   }
 
-  let q = supabase.from("novels").select(CARD_SELECT).order("created_at", { ascending: false }).limit(limit);
-  if (query && query.trim().length > 0) q = q.ilike("title", `%${query.trim()}%`);
+  if (sort === "recently_updated") {
+    // Recently updated = novels ordered by their most recent
+    // published-chapter time. Same pattern as home's Recently Updated
+    // list — pull recent chapters, dedupe by novel_id, then hydrate.
+    const { data: recentChapters } = await supabase
+      .from("chapters")
+      .select("novel_id, published_at")
+      .eq("is_published", true)
+      .order("published_at", { ascending: false })
+      .limit(400);
+
+    const ordered: string[] = [];
+    const seen = new Set<string>();
+    for (const c of recentChapters ?? []) {
+      if (seen.has(c.novel_id) || excludedFromTags.has(c.novel_id)) continue;
+      if (includeNovelIds && !includeNovelIds.has(c.novel_id)) continue;
+      seen.add(c.novel_id);
+      ordered.push(c.novel_id);
+      if (ordered.length >= limit * 2) break;
+    }
+    if (ordered.length === 0) return [];
+
+    return hydrateNovelsInOrder(supabase, ordered, {
+      demographic,
+      statuses,
+      titleQuery: trimmedQuery,
+      matchingAuthorIds,
+      limit,
+    });
+  }
+
+  // Default: newest by created_at, filtered in the DB.
+  let q = supabase
+    .from("novels")
+    .select(CARD_SELECT)
+    .order("created_at", { ascending: false })
+    .limit(limit * 2);
+  if (trimmedQuery.length > 0) {
+    if (matchingAuthorIds && matchingAuthorIds.length > 0) {
+      const idFragment = matchingAuthorIds.map((id) => `"${id}"`).join(",");
+      q = q.or(`title.ilike.%${trimmedQuery}%,author_id.in.(${idFragment})`);
+    } else {
+      q = q.ilike("title", `%${trimmedQuery}%`);
+    }
+  }
   if (includeNovelIds) q = q.in("id", [...includeNovelIds]);
+  if (demographic) q = q.eq("demographic", demographic);
+  if (statuses && statuses.length > 0) q = q.in("status", statuses);
 
   const { data, error } = await q;
   if (error) throw error;
 
   return (data ?? [])
     .map((row) => toCard(row as unknown as NovelRow))
-    .filter((n) => !excludedFromTags.has(n.id));
+    .filter((n) => !excludedFromTags.has(n.id))
+    .slice(0, limit);
+}
+
+interface HydrateOpts {
+  demographic?: Demographic | null;
+  statuses?: NovelStatus[];
+  titleQuery: string;
+  matchingAuthorIds: string[] | null;
+  limit: number;
+}
+
+// Given an ordered list of novel ids from a score-based query, load
+// the full card rows, apply the remaining DB-side filters
+// (demographic, status, title/author query), and return the results
+// in the input order, capped at `limit`.
+async function hydrateNovelsInOrder(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  ids: string[],
+  { demographic, statuses, titleQuery, matchingAuthorIds, limit }: HydrateOpts,
+): Promise<NovelCardData[]> {
+  let novelsQ = supabase.from("novels").select(CARD_SELECT).in("id", ids);
+  if (titleQuery.length > 0) {
+    if (matchingAuthorIds && matchingAuthorIds.length > 0) {
+      const idFragment = matchingAuthorIds.map((id) => `"${id}"`).join(",");
+      novelsQ = novelsQ.or(`title.ilike.%${titleQuery}%,author_id.in.(${idFragment})`);
+    } else {
+      novelsQ = novelsQ.ilike("title", `%${titleQuery}%`);
+    }
+  }
+  if (demographic) novelsQ = novelsQ.eq("demographic", demographic);
+  if (statuses && statuses.length > 0) novelsQ = novelsQ.in("status", statuses);
+
+  const { data: novels, error } = await novelsQ;
+  if (error) throw error;
+  const byId = new Map(
+    ((novels ?? []) as unknown as NovelRow[]).map((row) => [row.id, toCard(row)]),
+  );
+  const results: NovelCardData[] = [];
+  for (const id of ids) {
+    const n = byId.get(id);
+    if (n) results.push(n);
+    if (results.length >= limit) break;
+  }
+  return results;
 }
 
 export async function getNovelById(novelId: string): Promise<NovelDetailData | null> {
@@ -298,7 +432,7 @@ export async function getNovelById(novelId: string): Promise<NovelDetailData | n
   const { data, error } = await supabase
     .from("novels")
     .select(
-      "id, title, cover_url, status, synopsis, author_id, created_at, demographic, novel_genres(genres(id,name,slug)), profiles(pen_name), novel_tags(tags(id,name,slug,is_approved))",
+      "id, title, cover_url, status, synopsis, author_id, created_at, demographic, novel_genres(genres(id,name,slug)), profiles(pen_name), novel_tags(tags(id,name,slug,is_approved,tag_group))",
     )
     .eq("id", novelId)
     .maybeSingle();

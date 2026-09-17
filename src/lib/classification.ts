@@ -35,3 +35,45 @@ export function demographicLabel(value: Demographic | null): string | null {
 export function normaliseTagName(name: string): string {
   return name.toLowerCase().replace(/[^a-z0-9]+/g, "");
 }
+
+// Fixed tag-group set, mirrored in supabase/migrations/0009_tag_groups.sql
+// (see the CHECK constraint on tags.tag_group). Change both together.
+// Genres and demographics are NOT tag groups — they live on their own
+// columns and stay separate from this taxonomy.
+export type TagGroup =
+  | "characters"
+  | "tropes"
+  | "setting"
+  | "style_pacing"
+  | "themes"
+  | "content_warnings"
+  | "other";
+
+export const TAG_GROUPS: ReadonlyArray<{
+  value: TagGroup;
+  label: string;
+  description?: string;
+}> = [
+  { value: "characters", label: "Characters", description: "Leads and casts." },
+  { value: "tropes", label: "Tropes", description: "Recurring narrative devices." },
+  { value: "setting", label: "Setting", description: "Where and when the story sits." },
+  { value: "style_pacing", label: "Style & Pacing", description: "Prose style, POV, cadence." },
+  { value: "themes", label: "Themes", description: "What the story explores; tone." },
+  {
+    value: "content_warnings",
+    label: "Content Warnings",
+    description: "Exclude what you don't want to read.",
+  },
+  { value: "other", label: "Other" },
+];
+
+export const TAG_GROUP_LABEL: Record<TagGroup, string> = Object.fromEntries(
+  TAG_GROUPS.map((g) => [g.value, g.label]),
+) as Record<TagGroup, string>;
+
+// A tag with no group falls into "other" — matches how the migration
+// backfills untouched rows.
+export function tagGroupOf(group: string | null | undefined): TagGroup {
+  const v = (group ?? "other") as TagGroup;
+  return TAG_GROUP_LABEL[v] ? v : "other";
+}

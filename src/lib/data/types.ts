@@ -13,6 +13,7 @@ export interface TagOption {
   name: string;
   slug: string;
   is_approved?: boolean;
+  tag_group?: string | null;
 }
 
 export interface NovelCardData {
