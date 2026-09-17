@@ -111,8 +111,17 @@ export function ParagraphReactions({
         <ParagraphBlock paragraph={paragraph} />
       </button>
 
-      {interactive && (
-        <div className="mb-5 min-h-[44px]">
+      {interactive && (barOpen || counts.total > 0 || initialCommentCount > 0) && (
+        // Only reserve the slot when something will actually appear
+        // there: the bar is open, or the paragraph already has
+        // reactions or comments. Empty paragraphs render as prose,
+        // with no dead space between them. When counts DO exist the
+        // slot is sized to fit them so nothing shifts on load; when
+        // the bar opens on an empty paragraph it grows the slot but
+        // the tapped paragraph stays where it is on screen (the bar
+        // renders below it, pushing later text down, never the
+        // paragraph itself up).
+        <div className={barOpen ? "mt-1.5 mb-4 min-h-[44px]" : "mt-1 mb-3 text-xs"}>
           {barOpen ? (
             <ReactionBar
               myReactions={myReactions}
