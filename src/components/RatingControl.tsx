@@ -27,7 +27,6 @@ export function RatingControl({
 }) {
   const [myRating, setMyRating] = useState<number | null>(initialMyRating);
   const [summary, setSummary] = useState(initialSummary);
-  const [needsLogin, setNeedsLogin] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [, startTransition] = useTransition();
 
@@ -37,6 +36,14 @@ export function RatingControl({
         You can&apos;t rate your own novel — that&apos;s why the control isn&apos;t shown here.
       </p>
     );
+  }
+
+  // Guest readers get the running summary and a plain Log-in link.
+  // We never render the "Your rating" dropdown to someone who can't
+  // change it — a dropdown that just prompts a login is a dead
+  // control per the no-dead-controls rule.
+  if (!isLoggedIn) {
+    return <GuestRatingSummary summary={summary} />;
   }
 
   function optimisticApply(nextRating: number | null) {
@@ -62,10 +69,6 @@ export function RatingControl({
   }
 
   function handleChange(raw: string) {
-    if (!isLoggedIn) {
-      setNeedsLogin(true);
-      return;
-    }
     setError(null);
 
     if (raw === "") {
@@ -128,7 +131,6 @@ export function RatingControl({
         <select
           value={myRating === null ? "" : String(myRating)}
           onChange={(e) => handleChange(e.target.value)}
-          disabled={!isLoggedIn && needsLogin}
           className="ml-2 rounded border border-[var(--border)] bg-[var(--background)] px-2 py-1 text-sm text-[var(--foreground)]"
         >
           <option value="">— none —</option>
@@ -140,15 +142,43 @@ export function RatingControl({
         </select>
       </label>
 
-      {needsLogin && (
-        <p className="mt-3 text-xs">
-          <Link href="/login" className="text-[var(--brand)]">
-            Log in
-          </Link>{" "}
-          to rate this novel.
-        </p>
-      )}
       {error && <p className="mt-2 text-xs text-red-600">{error}</p>}
+    </div>
+  );
+}
+
+// Read-only summary for logged-out readers. Uses the same "under 5
+// ratings" wording as the signed-in control's header, then a plain
+// "Log in to rate" link. No dropdown, so no dead control.
+function GuestRatingSummary({ summary }: { summary: { ratingCount: number; avgScore: number } }) {
+  const under = summary.ratingCount < RATING_MIN_COUNT;
+  return (
+    <div className="rounded-xl border border-[var(--border)] bg-[var(--surface)] p-4">
+      <div className="flex items-baseline justify-between gap-3">
+        <span className="text-sm font-medium">Rating</span>
+        {under ? (
+          summary.ratingCount === 0 ? (
+            <span className="text-xs text-[var(--muted)]">Needs {RATING_MIN_COUNT} ratings</span>
+          ) : (
+            <span className="text-xs text-[var(--muted)]">
+              {summary.ratingCount}/{RATING_MIN_COUNT} ratings so far
+            </span>
+          )
+        ) : (
+          <span>
+            <span className="text-lg font-semibold">{formatRatingAverage(summary.avgScore)}</span>
+            <span className="ml-1 text-xs text-[var(--muted)]">
+              / 10 &middot; {summary.ratingCount} ratings
+            </span>
+          </span>
+        )}
+      </div>
+      <p className="mt-3 text-xs">
+        <Link href="/login" className="text-[var(--brand)] hover:underline">
+          Log in
+        </Link>{" "}
+        to rate this novel.
+      </p>
     </div>
   );
 }
