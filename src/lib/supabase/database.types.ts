@@ -30,6 +30,11 @@ export interface Database {
           id: string;
           pen_name: string | null;
           is_author: boolean;
+          avatar_url: string | null;
+          bio: string | null;
+          links: Array<{ label?: string | null; url: string }>;
+          deleted_at: string | null;
+          deletion_choice: "keep_work" | "remove_work" | null;
           created_at: string;
           updated_at: string;
         };
@@ -37,10 +42,20 @@ export interface Database {
           id: string;
           pen_name?: string | null;
           is_author?: boolean;
+          avatar_url?: string | null;
+          bio?: string | null;
+          links?: Array<{ label?: string | null; url: string }>;
+          deleted_at?: string | null;
+          deletion_choice?: "keep_work" | "remove_work" | null;
         };
         Update: {
           pen_name?: string | null;
           is_author?: boolean;
+          avatar_url?: string | null;
+          bio?: string | null;
+          links?: Array<{ label?: string | null; url: string }>;
+          deleted_at?: string | null;
+          deletion_choice?: "keep_work" | "remove_work" | null;
         };
         Relationships: [];
       };
@@ -430,6 +445,14 @@ export interface Database {
           is_approved: boolean;
           was_created: boolean;
         }[];
+      };
+      soft_delete_account: {
+        Args: { p_choice: string };
+        Returns: void;
+      };
+      cancel_account_deletion: {
+        Args: Record<string, never>;
+        Returns: void;
       };
     };
     Enums: Record<string, never>;

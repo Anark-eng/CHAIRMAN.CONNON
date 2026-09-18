@@ -532,6 +532,38 @@ export async function getAuthorPenName(authorId: string): Promise<string | null>
   return data?.pen_name ?? null;
 }
 
+// Public profile fields used by /authors/[authorId]. Reads only what's
+// safe to show any visitor.
+export interface PublicProfileData {
+  id: string;
+  pen_name: string | null;
+  avatar_url: string | null;
+  bio: string | null;
+  links: Array<{ label?: string | null; url: string }>;
+  deleted_at: string | null;
+}
+
+export async function getPublicProfile(authorId: string): Promise<PublicProfileData | null> {
+  const supabase = await createClient();
+  const { data, error } = await supabase
+    .from("profiles")
+    .select("id, pen_name, avatar_url, bio, links, deleted_at")
+    .eq("id", authorId)
+    .maybeSingle();
+  if (error) return null;
+  if (!data) return null;
+  return {
+    id: data.id,
+    pen_name: data.pen_name,
+    avatar_url: data.avatar_url,
+    bio: data.bio,
+    links: Array.isArray(data.links)
+      ? (data.links as Array<{ label?: string | null; url: string }>)
+      : [],
+    deleted_at: data.deleted_at,
+  };
+}
+
 // Every novel the given author has written, most recent first, in the
 // same card shape used on Home / Browse. Used by the author-profile
 // page — includes drafts only when the viewer IS that author (RLS
