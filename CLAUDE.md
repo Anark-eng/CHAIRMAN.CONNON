@@ -35,7 +35,14 @@ src/
     reset-password/             Set-new-password form (session-gated)
     auth/callback/route.ts      Handles confirmation & reset links
     auth/error/                 "Link expired" page
-    profile/                    Author Mode toggle + Blocked tags
+    profile/                    Public profile fields (pen name, Author Mode,
+                                 avatar, bio, links)
+    settings/                   Private account settings (email, password,
+                                 blocked tags, data export, delete account)
+    authors/[authorId]/         Public author profile (pen name + avatar +
+                                 bio + links + published novels; "This
+                                 account is no longer available" when the
+                                 account is soft-deleted)
     my-novels/                  An author's own novels
     library/                    A reader's saved novels
     novels/
@@ -172,6 +179,27 @@ supabase/
                                      - get_author_novel_stats() v2: adds rating
                                        stats + score histogram + all three
                                        board ranks.
+    0010_profiles_and_account_deletion.sql
+                                     Public-profile fields + soft-delete flow:
+                                     - profiles.avatar_url, bio (plain text),
+                                       links (jsonb array of {label, url}).
+                                     - avatars storage bucket + policies
+                                       (public read, owner-only write, path
+                                       keyed on {user_id}/…).
+                                     - Reserved "Deleted user" identity at
+                                       00000000-0000-0000-0000-000000000001
+                                       (real auth.users row, unusable
+                                       password, RFC-2606 .invalid email).
+                                     - profiles.deleted_at + deletion_choice
+                                       (keep_work | remove_work).
+                                     - soft_delete_account(choice),
+                                       cancel_account_deletion(),
+                                       finalize_account_deletions() —
+                                       hourly pg_cron. 30-day grace period.
+                                     - RLS widened to hide novels + chapters
+                                       from readers when the author's
+                                       profile is soft-deleted (author still
+                                       sees their own).
     0009_tag_groups.sql              Tag taxonomy grouping:
                                      - tags.tag_group (text, CHECK on a fixed
                                        set of 7: characters, tropes, setting,
@@ -334,6 +362,24 @@ supabase/
 - **Reading progress is the single source of truth for "unread".** Both
   the Library "new" badge and the Updates page derive unread state from
   the reader's last-read chapter order — don't invent a second store.
+- **Account deletion has a real cascade problem; don't reinvent the
+  solution.** `novels.author_id -> profiles(id) ON DELETE CASCADE` and
+  `profiles.id -> auth.users(id) ON DELETE CASCADE` mean a naive delete
+  would take every novel and chapter with it. Migration 0010 solves
+  this with a two-phase flow (soft mark + finalize after 30 days) and
+  a reserved "Deleted user" profile at
+  `00000000-0000-0000-0000-000000000001` — imported via
+  `RESERVED_DELETED_USER_ID` in `src/lib/data/profile.ts`. On
+  finalize, `keep_work` reassigns novels + ratings + comments to
+  reserved before the `auth.users` delete cascade fires, so
+  `remove_work` can rely on the same cascade to take everything
+  down cleanly. Never null out `novels.author_id` — the trending
+  refresh compares each signal's user against the novel's author to
+  exclude them, and a null comparison breaks that exclusion silently.
+- **Reader-private data stays private.** No setting exposes a reader's
+  library, reading progress, ratings or reading history to another
+  reader. If a future task adds a "public reading shelf", it needs its
+  own opt-in and its own RLS.
 
 ## Planned features (not built yet)
 
